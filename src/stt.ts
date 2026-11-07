@@ -31,6 +31,7 @@ export class Stt {
   private rec: any = null;
   private listening = false;
   private restartTimer: number | null = null;
+  private failures = 0; // consecutive sessions that died with an error
   private readonly cb: SttCallbacks;
   private lang: string;
 
@@ -55,6 +56,7 @@ export class Stt {
       return;
     }
     this.listening = true;
+    this.failures = 0;
     this.spawn(Ctor);
   }
 
@@ -85,6 +87,7 @@ export class Stt {
     rec.maxAlternatives = 1;
 
     rec.onstart = () => this.cb.onStatus("Listening");
+    let failed = false;
 
     rec.onresult = (event: any) => {
       let interim = "";
@@ -104,6 +107,7 @@ export class Stt {
     rec.onerror = (event: any) => {
       // "no-speech" and "aborted" are routine on iOS; anything else is worth showing.
       if (event.error !== "no-speech" && event.error !== "aborted") {
+        failed = true;
         this.cb.onStatus(`Mic error: ${event.error}`);
       }
       if (event.error === "not-allowed" || event.error === "service-not-allowed") {
@@ -115,11 +119,23 @@ export class Stt {
     rec.onend = () => {
       this.rec = null;
       if (!this.listening) return;
-      // Safari ends sessions after silence or ~1 minute; restart quickly.
+      this.failures = failed ? this.failures + 1 : 0;
+      if (this.failures >= 5) {
+        // The speech service itself is unreachable; flickering won't fix it.
+        this.listening = false;
+        this.cb.onStatus(
+          "Speech service unreachable. iPhone: Settings → General → Keyboard → Enable Dictation, and use a Safari tab. Laptop: Chrome or Safari only.",
+        );
+        this.cb.onGaveUp();
+        return;
+      }
+      // Safari ends sessions after silence or ~1 minute; restart quickly,
+      // but back off when the last session died with an error.
+      const delay = failed ? Math.min(500 * 2 ** this.failures, 5000) : 150;
       this.restartTimer = window.setTimeout(() => {
         this.restartTimer = null;
         if (this.listening) this.spawn(Ctor);
-      }, 150);
+      }, delay);
     };
 
     this.rec = rec;
