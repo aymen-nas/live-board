@@ -15,7 +15,8 @@ function clock(ms: number): string {
 export function exportSession(entries: SessionEntry[], boardName = ""): string {
   if (entries.length === 0) return "";
   const first = new Date(entries[0]!.at);
-  const date = first.toISOString().slice(0, 10);
+  // Local date, like the clock times below (toISOString would give UTC: yesterday's date just after midnight).
+  const date = [first.getFullYear(), first.getMonth() + 1, first.getDate()].map((n, i) => String(n).padStart(i === 0 ? 4 : 2, "0")).join("-");
   const header = `Live Board transcript, ${date}${boardName ? `, board: ${boardName}` : ""}`;
   const lines = entries.map((e) => (e.kind === "heard" ? `${clock(e.at)}  ${e.text}` : `${clock(e.at)}  → suggested: ${e.text}`));
   return [header, "", ...lines].join("\n");

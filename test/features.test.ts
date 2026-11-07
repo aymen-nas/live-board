@@ -132,3 +132,10 @@ describe("sameSentence (early fire)", () => {
     expect(sameSentence("Aymen where are we with the rain alerts", "")).toBe(false);
   });
 });
+
+describe("exportSession date", () => {
+  it("uses the local date, also just after midnight", () => {
+    const at = new Date(2026, 10, 8, 0, 30, 0).getTime(); // 8 Nov, 00:30 local
+    expect(exportSession([{ at, kind: "heard", text: "hi" }])).toContain("transcript, 2026-11-08");
+  });
+});

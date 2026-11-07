@@ -92,7 +92,7 @@ export function formatTranscript(transcript: Utterance[]): string {
 
 function userText(req: AnswerRequest): string {
   return req.forced
-    ? `${formatTranscript(req.transcript)}\n\nANSWER: give me the exact words I say next.`
+    ? `${formatTranscript(req.transcript)}\n\nANSWER: give me the exact words I say next about the LATEST line, even if it wasn't aimed at me. Never reply with — here.`
     : formatTranscript(req.transcript);
 }
 
