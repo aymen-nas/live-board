@@ -54,14 +54,23 @@ export function saveSettings(s: Settings, store: Store = localStorage): void {
   }
 }
 
-// An Anthropic key always starts with "sk-ant-". Anything else sent to
-// Anthropic fails as "invalid key", so move it to Routeway instead of
-// making the user find the dropdown.
+// Which provider a key belongs to, when its prefix says so.
+export function providerForKey(key: string): Provider | null {
+  if (key.startsWith("sk-ant-")) return "anthropic";
+  if (key.startsWith("AIza")) return "gemini";
+  if (key.startsWith("sk-")) return "routeway";
+  return null;
+}
+
+// A key sent to the wrong host fails as "invalid key" at best, and at worst
+// hands an Anthropic key to someone else. When the key's prefix names a
+// provider, use that provider. Custom endpoints keep whatever key they get.
 export function fixProviderForKey(s: Settings): void {
-  if (s.provider === "anthropic" && s.apiKey && !s.apiKey.startsWith("sk-ant-")) {
-    s.provider = "routeway";
-    s.baseUrl = PROVIDERS.routeway.baseUrl;
-    s.model = PROVIDERS.routeway.model;
+  const owner = s.apiKey ? providerForKey(s.apiKey) : null;
+  if (owner && owner !== s.provider && (s.provider !== "custom" || owner === "anthropic")) {
+    s.provider = owner;
+    s.baseUrl = PROVIDERS[owner].baseUrl;
+    s.model = PROVIDERS[owner].model;
   }
   if (s.provider !== "anthropic" && !s.baseUrl) s.baseUrl = PROVIDERS[s.provider].baseUrl;
   if (!s.model) s.model = PROVIDERS[s.provider].model;

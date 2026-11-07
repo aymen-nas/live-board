@@ -5,7 +5,6 @@
 export interface RemoteBoard {
   name: string; // file name without .txt, e.g. "2026-11-04 Standup"
   path: string;
-  sha: string;
 }
 
 export interface GitHubSource {
@@ -30,19 +29,27 @@ async function check(res: Response): Promise<Response> {
   throw new Error(`GitHub ${res.status} ${res.statusText}`);
 }
 
-export async function listRemoteBoards(src: GitHubSource, signal?: AbortSignal): Promise<RemoteBoard[]> {
-  const res = await check(await fetch(`${API}/repos/${src.repo}/contents/boards`, { headers: headers(src.token), signal }));
-  const items = (await res.json()) as { type: string; name: string; path: string; sha: string }[];
-  return items
+export interface RemoteListing {
+  boards: RemoteBoard[];
+  // Classic and OAuth tokens list their scopes; they can do far more than
+  // read one repo, so the app suggests a fine-grained read-only token.
+  broadToken: boolean;
+}
+
+export async function listRemoteBoards(src: GitHubSource, signal?: AbortSignal): Promise<RemoteListing> {
+  const res = await check(await fetch(`${API}/repos/${src.repo}/contents/boards`, { headers: headers(src.token), signal, cache: "no-cache" }));
+  const items = (await res.json()) as { type: string; name: string; path: string }[];
+  const boards = items
     .filter((i) => i.type === "file" && i.name.endsWith(".txt"))
-    .map((i) => ({ name: i.name.replace(/\.txt$/, ""), path: i.path, sha: i.sha }))
+    .map((i) => ({ name: i.name.replace(/\.txt$/, ""), path: i.path }))
     .sort((a, b) => b.name.localeCompare(a.name)); // newest date first
+  return { boards, broadToken: (res.headers.get("x-oauth-scopes") ?? "").trim() !== "" };
 }
 
 export async function fetchRemoteBoard(src: GitHubSource, path: string, signal?: AbortSignal): Promise<string> {
   const encoded = path.split("/").map(encodeURIComponent).join("/");
   const res = await check(
-    await fetch(`${API}/repos/${src.repo}/contents/${encoded}`, { headers: headers(src.token, true), signal }),
+    await fetch(`${API}/repos/${src.repo}/contents/${encoded}`, { headers: headers(src.token, true), signal, cache: "no-cache" }),
   );
   return res.text();
 }

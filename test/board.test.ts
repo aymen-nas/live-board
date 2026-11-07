@@ -12,11 +12,11 @@ const BOARD = [
   "CLUELY PRIMER",
   "Always answer in English. You help me, Aymen, live in a meeting. Numbers as digits.",
   SEP,
-  "AI NEWS — WHAT CHANGES FOR PT",
-  "PT-safe. We check for news every minute instead of every 2 hours.",
+  "RAIN ALERTS — WHAT CHANGES FOR OPS",
+  "Safe for operations. We check the forecast every minute instead of every 2 hours.",
   SEP,
   "QUESTION BANK",
-  "Questions to pick from, word for word. Is a Mattermost ping still what you want? Should it run until 23:00 or only trading hours? Who from PT should be in the channel?",
+  "Questions to pick from, word for word. Is a chat ping still what you want? Should it run until 23:00 or only office hours? Who from operations should be in the channel?",
 ].join("\n");
 
 describe("parseBoard", () => {
@@ -27,10 +27,10 @@ describe("parseBoard", () => {
     expect(board.primer).toMatch(/^Always answer in English/);
     expect(board.cards.map((c) => c.title)).toEqual([
       "CLUELY PRIMER",
-      "AI NEWS — WHAT CHANGES FOR PT",
+      "RAIN ALERTS — WHAT CHANGES FOR OPS",
       "QUESTION BANK",
     ]);
-    expect(board.cards[1]!.body).toBe("PT-safe. We check for news every minute instead of every 2 hours.");
+    expect(board.cards[1]!.body).toBe("Safe for operations. We check the forecast every minute instead of every 2 hours.");
     expect(board.questions).toHaveLength(3);
   });
 
@@ -62,7 +62,7 @@ describe("buildSystemPrompt", () => {
     const prompt = buildSystemPrompt(board, "Aymen");
     expect(prompt.startsWith(board.primer)).toBe(true);
     expect(prompt).toContain("## OPENER — WORD FOR WORD");
-    expect(prompt).toContain("## AI NEWS — WHAT CHANGES FOR PT");
+    expect(prompt).toContain("## RAIN ALERTS — WHAT CHANGES FOR OPS");
     expect(prompt).toContain("## QUESTION BANK");
     expect(prompt).not.toContain("## CLUELY PRIMER");
     expect(prompt).toContain("reply with exactly one character: —");

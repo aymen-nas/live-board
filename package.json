@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "HTTPS=1 vite",
+    "dev:phone": "LAN=1 HTTPS=1 vite",
     "dev:http": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",

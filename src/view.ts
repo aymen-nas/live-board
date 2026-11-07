@@ -4,7 +4,7 @@
 import { buildSystemPrompt, parseBoard } from "./board";
 import { recentIndexes } from "./conversation";
 import { bestCard, bestQuestion, indexBoard } from "./match";
-import { isFree, limiter, settings, state } from "./state";
+import { limiter, settings, state } from "./state";
 import { $, els, escapeHtml, flash, showAnswer, showCard } from "./ui";
 
 const VISIBLE_LINES = 5;
@@ -18,6 +18,7 @@ export function renderLines(): void {
     .slice(-VISIBLE_LINES)
     .map((i) => `<button class="line" data-i="${i}">${escapeHtml(state.transcript[i]!.text)}</button>`)
     .join("");
+  els.lines.scrollTop = els.lines.scrollHeight; // newest line in view
 }
 
 export function renderHistory(): void {
@@ -31,7 +32,8 @@ export function renderHistory(): void {
 }
 
 export function renderRate(): void {
-  els.rate.textContent = isFree() ? `${limiter.left()}/${limiter.perMinute}` : "";
+  const l = limiter();
+  els.rate.textContent = l ? `${l.left()}/${l.perMinute}` : "";
 }
 
 export function renderChips(question: string | null): void {

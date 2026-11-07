@@ -9,27 +9,30 @@ export const $ = <T extends HTMLElement>(id: string): T => document.getElementBy
 
 document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
   <header>
-    <span id="status">Idle</span>
+    <span id="status" role="status">Idle</span>
     <span id="meta"></span>
     <span id="rate" class="rate" title="Calls left this minute"></span>
     <button id="updateBtn" class="update" hidden>Update ready · tap</button>
-    <button id="settingsBtn" class="ghost" aria-label="Settings">⚙︎</button>
+    <button id="copyBtn" class="icon" aria-label="Copy transcript">⧉</button>
+    <button id="settingsBtn" class="icon" aria-label="Settings">⚙︎</button>
   </header>
 
   <main>
-    <div id="answer" class="answer muted">Paste a board in settings, then start listening.</div>
-    <div id="history" class="history"></div>
+    <section id="answerArea" class="answer-area">
+      <div id="answer" class="answer muted"></div>
+      <div id="history" class="history" aria-label="Earlier answers"></div>
+    </section>
     <div id="chips" class="chips"></div>
-    <div id="interim" class="interim"></div>
-    <div id="lines" class="lines" aria-label="Tap a line to answer it"></div>
+    <div id="interim" class="interim" aria-hidden="true"></div>
+    <div id="lines" class="lines" role="group" aria-label="Recent lines. Tap one to get an answer for it."></div>
+    <div id="announce" class="visually-hidden" aria-live="polite"></div>
   </main>
 
   <footer>
     <button id="listenBtn" class="primary">Start</button>
     <button id="answerBtn">Answer</button>
     <button id="nudgeBtn">Question</button>
-    <button id="copyBtn" class="ghost" aria-label="Copy transcript">⧉</button>
-    <label class="auto"><input type="checkbox" id="autoChk"> auto</label>
+    <label class="auto" title="Answer automatically"><input type="checkbox" id="autoChk"> auto</label>
   </footer>
 
   <dialog id="cardView">
@@ -58,10 +61,10 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
           <button id="libDelete" type="button" class="ghost">Delete</button>
         </span>
       </label>
-      <label>Board name <input id="boardName" type="text" autocomplete="off" placeholder="07.11 PT oversight"></label>
+      <label>Board name <input id="boardName" type="text" autocomplete="off" placeholder="07.11 Weekly sync"></label>
       <label>Board <textarea id="boardText" rows="7" placeholder="OPENER — WORD FOR WORD …"></textarea></label>
       <div id="boardInfo" class="hint"></div>
-      <details>
+      <details id="providerSection">
         <summary>Provider, key and language</summary>
         <label>Provider
           <select id="provider">
@@ -84,7 +87,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
         <button id="clearBtn" type="button" class="ghost">New meeting: clear transcript</button>
       </details>
       <menu>
-        <button value="cancel" class="ghost">Close</button>
+        <button id="closeBtn" type="button" class="ghost">Close</button>
         <button id="saveBtn" value="save" class="primary">Save &amp; load board</button>
       </menu>
     </form>
@@ -96,7 +99,9 @@ export const els = {
   meta: $("meta"),
   rate: $("rate"),
   update: $<HTMLButtonElement>("updateBtn"),
+  answerArea: $("answerArea"),
   answer: $("answer"),
+  announce: $("announce"),
   history: $("history"),
   chips: $("chips"),
   interim: $("interim"),
@@ -121,18 +126,33 @@ export function setMeta(text: string): void {
 export function showAnswer(text: string, muted = false): void {
   els.answer.textContent = text;
   els.answer.classList.toggle("muted", muted);
+  els.answer.classList.remove("error");
 }
 
+export function showError(text: string): void {
+  els.answer.textContent = text;
+  els.answer.classList.remove("muted");
+  els.answer.classList.add("error");
+}
+
+// A new answer: glow, and scroll it into view if the history was scrolled.
 export function flash(): void {
   els.answer.classList.remove("fresh");
   void els.answer.offsetWidth; // restart the animation
   els.answer.classList.add("fresh");
+  els.answerArea.scrollTop = 0;
 }
 
+// Screen readers hear each finished answer once, not every streamed word.
+export function announce(text: string): void {
+  els.announce.textContent = text;
+}
+
+// A sheet from the bottom, not a modal: an answer arriving meanwhile stays visible above it.
 export function showCard(title: string, body: string): void {
   $("cardTitle").textContent = title;
   $("cardBody").textContent = body;
-  els.card.showModal();
+  if (!els.card.open) els.card.show();
 }
 
 export function escapeHtml(s: string): string {

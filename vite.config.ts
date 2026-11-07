@@ -4,7 +4,8 @@ import { VitePWA } from "vite-plugin-pwa";
 
 // BASE_PATH=/live-board/ for GitHub Pages; "/" everywhere else.
 // HTTPS=1 serves the dev server with a self-signed certificate, which the
-// iPhone needs before Safari allows the microphone on a LAN address.
+// iPhone needs before Safari allows the microphone on a LAN address; LAN=1
+// opens it to the local network.
 export default defineConfig({
   base: process.env.BASE_PATH ?? "/",
   plugins: [
@@ -29,5 +30,7 @@ export default defineConfig({
       },
     }),
   ],
-  server: { host: true },
+  // LAN only on request (npm run dev:phone): in dev, VITE_ variables such as the
+  // sim key are readable by anyone who can reach the server.
+  server: { host: process.env.LAN ? true : "localhost" },
 });

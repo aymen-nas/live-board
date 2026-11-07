@@ -1,97 +1,278 @@
+/* Live Board: one screen, held in a hand under the table, in a dark room.
+   Layout for 375×812 first: header (1 line), answer area (scrolls on its
+   own), topic chips, live line, last lines (tap to answer), footer. */
+
 :root {
   color-scheme: dark;
   --bg: #0b0d10;
+  --panel: #15181d;
+  --raised: #1d2127;
+  --line: #2a2f37;
   --fg: #e8eaed;
   --dim: #8a9099;
   --accent: #5ac8fa;
   --live: #ff453a;
-  --panel: #15181d;
+  --warn: #ffb340;
+  --error: #ff8a80;
+  --ok: #30d158;
+  --tap: 44px; /* smallest comfortable tap target */
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  -webkit-text-size-adjust: 100%;
 }
 
 * { box-sizing: border-box; }
 
-html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); }
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  overflow: hidden; /* the app never pans sideways or bounces */
+}
 
 #app {
   height: 100dvh;
   display: flex;
   flex-direction: column;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-}
-
-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  font-size: 14px;
-  color: var(--dim);
-}
-header #status { flex: 1; }
-header .ghost { font-size: 22px; }
-
-main {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.answer {
-  flex-shrink: 0; /* long answers push the transcript down instead of overlapping it */
-  font-size: 30px;
-  line-height: 1.3;
-  font-weight: 600;
-  min-height: 40%;
-  transition: opacity 0.2s;
-}
-.answer.muted { color: var(--dim); font-weight: 400; font-size: 22px; }
-.answer.thinking { opacity: 0.6; }
-
-.interim {
-  flex-shrink: 0;
-  min-height: 1.4em;
-  font-size: 16px;
-  color: var(--accent);
-  font-style: italic;
-}
-
-.lines {
-  flex-shrink: 0;
-  font-size: 14px;
-  color: var(--dim);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-footer {
-  display: flex;
-  gap: 10px;
-  padding: 12px 16px 16px;
-  align-items: center;
-  background: var(--panel);
+  overflow: hidden;
 }
 
 button {
   font: inherit;
   font-size: 17px;
-  padding: 14px 18px;
+  min-height: var(--tap);
+  padding: 10px 14px;
   border-radius: 14px;
-  border: 1px solid #2a2f37;
-  background: #1d2127;
+  border: 1px solid var(--line);
+  background: var(--raised);
   color: var(--fg);
   -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
-button.primary { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
+button:active { filter: brightness(1.3); }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+button:disabled { opacity: 0.4; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #000; font-weight: 600; }
 button.primary.live { background: var(--live); border-color: var(--live); color: #fff; }
-button.ghost { background: transparent; border-color: transparent; color: var(--dim); padding: 6px 10px; }
+button.ghost { background: transparent; border-color: transparent; color: var(--dim); }
+button.icon {
+  background: transparent;
+  border-color: transparent;
+  color: var(--dim);
+  font-size: 22px;
+  width: var(--tap);
+  padding: 0;
+}
 
-.auto { margin-left: auto; font-size: 14px; color: var(--dim); display: flex; gap: 6px; align-items: center; }
-.auto input { width: 20px; height: 20px; }
+/* ---------- header: one line, never wraps ---------- */
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--tap);
+  padding: 2px 6px 2px 16px;
+  font-size: 14px;
+  color: var(--dim);
+}
+header #status,
+header #meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+header #status { flex: 1 1 auto; display: flex; align-items: center; gap: 8px; }
+header #status::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dim);
+}
+#app:has(#listenBtn.live) header #status::before { background: var(--live); animation: pulse 1.6s ease-in-out infinite; }
+header #meta { flex: 0 1 auto; font-variant-numeric: tabular-nums; }
+header .rate { flex: none; font-variant-numeric: tabular-nums; color: var(--accent); }
+header .rate:empty { display: none; }
+.update {
+  flex: none;
+  min-height: 32px;
+  padding: 4px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: #1f6f43;
+  color: #fff;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+@keyframes pulse {
+  50% { opacity: 0.35; }
+}
+
+/* ---------- main ---------- */
+
+main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 16px 10px;
+  overflow: hidden;
+}
+
+/* The answer and the earlier ones scroll together, so a long answer never
+   pushes the live line and the transcript off the screen. */
+.answer-area {
+  flex: 0 1 auto;
+  min-height: 28%;
+  max-height: 55%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.answer {
+  font-size: 26px;
+  line-height: 1.3;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  transition: opacity 0.2s;
+}
+.answer.muted { color: var(--dim); font-weight: 400; font-size: 20px; }
+.answer.error { color: var(--error); font-weight: 500; font-size: 19px; }
+.answer.thinking { opacity: 0.8; }
+/* Thinking: a sliding bar above the text, so it can't be mistaken for idle. */
+.answer.thinking::before {
+  content: "";
+  display: block;
+  width: 35%;
+  height: 3px;
+  margin-bottom: 10px;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: slide 1.1s ease-in-out infinite alternate;
+}
+@keyframes slide {
+  from { transform: translateX(0); }
+  to { transform: translateX(185%); }
+}
+.answer.fresh { animation: fresh 1.2s ease-out; }
+@keyframes fresh {
+  0% { color: var(--accent); text-shadow: 0 0 18px rgba(90, 200, 250, 0.6); }
+  100% { text-shadow: none; }
+}
+
+.history {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 15px;
+  line-height: 1.35;
+  color: var(--dim);
+  border-left: 2px solid var(--line);
+  padding-left: 10px;
+}
+.history:empty { display: none; }
+
+/* Chips keep their row even when empty, so the lines below don't jump. */
+.chips {
+  flex: none;
+  min-height: 38px;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.chip {
+  flex: none;
+  max-width: 85%;
+  min-height: 38px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 14px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chip.q { border-color: var(--accent); }
+
+/* The live line has a fixed height: it can't push the tappable lines around. */
+.interim {
+  flex: none;
+  height: 2.7em;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  font-size: 16px;
+  line-height: 1.35;
+  color: var(--accent);
+  font-style: italic;
+}
+
+.lines {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+}
+.lines .line {
+  flex: none;
+  display: block;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 10px 8px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--dim);
+  font-size: 15px;
+  line-height: 1.35;
+  text-align: left;
+}
+.lines .line:last-child { color: var(--fg); }
+.lines .line:active { background: var(--raised); color: var(--fg); }
+
+/* ---------- footer: fits 375 px in one row ---------- */
+
+footer {
+  flex: none;
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 16px 12px;
+  background: var(--panel);
+}
+footer button { padding: 10px 6px; min-height: 50px; }
+.auto {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  justify-content: center;
+  min-width: var(--tap);
+  min-height: var(--tap);
+  font-size: 12px;
+  color: var(--dim);
+}
+.auto input { width: 22px; height: 22px; margin: 0; accent-color: var(--accent); }
+
+/* ---------- dialogs ---------- */
 
 dialog {
   border: none;
@@ -104,80 +285,60 @@ dialog {
 dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
 dialog h2 { margin: 0 0 12px; font-size: 20px; }
 dialog label { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; font-size: 14px; color: var(--dim); }
-dialog input, dialog select, dialog textarea {
+dialog input,
+dialog select,
+dialog textarea {
   font: inherit;
   font-size: 16px; /* 16px stops iOS from zooming into the field */
+  min-height: var(--tap);
   padding: 10px;
   border-radius: 10px;
-  border: 1px solid #2a2f37;
+  border: 1px solid var(--line);
   background: #0f1216;
   color: var(--fg);
 }
-dialog textarea { resize: vertical; font-size: 14px; }
+dialog textarea { resize: vertical; }
 dialog menu { display: flex; gap: 10px; justify-content: flex-end; padding: 0; margin: 8px 0 0; }
-.hint { font-size: 13px; color: var(--dim); margin-bottom: 8px; }
-
-/* ---------- v2: history, chips, tappable lines, flash ---------- */
-
-header .rate { font-variant-numeric: tabular-nums; color: var(--accent); min-width: 2.5em; text-align: right; }
-
-.answer.fresh { animation: fresh 1.2s ease-out; }
-@keyframes fresh {
-  0% { color: var(--accent); text-shadow: 0 0 18px rgba(90, 200, 250, 0.6); }
-  100% { color: var(--fg); text-shadow: none; }
-}
-
-.history {
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 15px;
-  line-height: 1.35;
-  color: var(--dim);
-  border-left: 2px solid #2a2f37;
-  padding-left: 10px;
-}
-.history:empty { display: none; }
-
-.chips { flex-shrink: 0; display: flex; flex-wrap: wrap; gap: 8px; }
-.chips:empty { display: none; }
-.chip {
-  font-size: 14px;
-  padding: 8px 12px;
-  border-radius: 999px;
-  text-align: left;
-  max-width: 100%;
-}
-.chip.q { border-color: var(--accent); }
-
-.lines .line {
-  display: block;
-  width: 100%;
-  text-align: left;
-  font-size: 14px;
-  color: var(--dim);
-  background: transparent;
-  border: none;
-  border-radius: 8px;
-  padding: 6px 8px;
-  margin: 0 -8px;
-}
-.lines .line:active { background: #1d2127; color: var(--fg); }
-
-.card-body { white-space: pre-wrap; font-size: 15px; line-height: 1.45; color: var(--fg); max-height: 60vh; overflow-y: auto; }
 dialog .row { display: flex; gap: 8px; align-items: center; }
 dialog .row select { flex: 1; min-width: 0; }
-dialog .row button { padding: 10px 12px; font-size: 15px; }
+dialog .row button { padding: 8px 12px; font-size: 15px; }
 dialog details { margin: 4px 0 12px; }
-dialog summary { color: var(--dim); font-size: 14px; padding: 8px 0; cursor: pointer; }
+dialog summary { color: var(--dim); font-size: 15px; min-height: var(--tap); display: flex; align-items: center; cursor: pointer; }
+.hint { font-size: 13px; color: var(--dim); margin-bottom: 8px; overflow-wrap: anywhere; }
 
-.update {
-  background: #1f6f43;
-  color: #fff;
-  border: 0;
-  border-radius: 999px;
-  padding: 6px 12px;
-  font-size: 13px;
-  min-height: 32px;
+/* Settings: clear of the notch and the home bar, scrolls inside. */
+#settings[open] {
+  margin-top: calc(env(safe-area-inset-top) + 12px);
+  max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px);
+  overflow-y: auto;
+}
+
+/* Topic card: a sheet from the bottom, not modal, so the answer stays visible. */
+#cardView[open] {
+  position: fixed;
+  inset: auto 0 0 0;
+  margin: 0 auto;
+  width: 100%;
+  max-width: 520px;
+  max-height: 55dvh;
+  overflow-y: auto;
+  border-radius: 18px 18px 0 0;
+  border-top: 1px solid var(--line);
+  padding-bottom: calc(16px + env(safe-area-inset-bottom));
+  box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.5);
+  z-index: 10;
+}
+.card-body { white-space: pre-wrap; font-size: 15px; line-height: 1.45; color: var(--fg); margin: 0; }
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before { animation: none !important; transition: none !important; }
 }

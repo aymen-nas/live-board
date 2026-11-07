@@ -26,7 +26,7 @@ export function tokenize(text: string): Set<string> {
   for (const raw of text.split(/[^\p{L}\p{N}]+/u)) {
     if (!raw) continue;
     const lower = raw.toLowerCase();
-    // Keep acronyms like PT, SES, LLM, EIX even when short.
+    // Keep acronyms like LLM, API, SMS even when short.
     const acronym = raw.length >= 2 && raw === raw.toUpperCase() && /\p{L}/u.test(raw);
     if (acronym || (lower.length >= 4 && !STOPWORDS.has(lower))) out.add(lower);
   }

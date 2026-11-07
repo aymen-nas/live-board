@@ -7,31 +7,44 @@
 //   answering.ts    one streamed call to the model
 //   connection.ts   preconnect and keep-warm
 //   settingsDialog  boards (GitHub, saved, pasted) and provider settings
+//   meeting.ts      the meeting survives a reload
 //   update.ts       "Update ready" when a new version is deployed
 
 import "./style.css";
 import { els, setMeta, setStatus, showAnswer, showCard, environment } from "./ui";
 import { ask } from "./answering";
 import { preconnect } from "./connection";
-import { toggleListening } from "./listening";
-import { saveSettings } from "./settings";
+import { LISTENING_CHANGED, stt, toggleListening } from "./listening";
+import { loadMeeting } from "./meeting";
 import { initSettings, syncRemote } from "./settingsDialog";
 import { exportSession } from "./session";
 import { devKey, loadSimBoard } from "./sim";
 import { PROVIDERS } from "./llm";
-import { SIM, settings, state } from "./state";
+import { SIM, persistSettings, settings, state } from "./state";
 import { sttSupported } from "./stt";
 import { setupUpdates } from "./update";
-import { initChips, loadBoard, renderRate, showQuestion } from "./view";
+import { initChips, loadBoard, renderHistory, renderLines, renderRate, showQuestion } from "./view";
 
 els.listen.addEventListener("click", toggleListening);
 els.answerBtn.addEventListener("click", () => void ask(true));
 
-// Tap a transcript line to get the answer to exactly that line.
+// Tap a transcript line to get the answer to exactly that line. The list can
+// shift while the finger is down (a new line arrives), so the line counts
+// where the touch started, not where it ended.
+let touchedLine: { i: number; at: number } | null = null;
+const lineIndex = (target: EventTarget | null): number | null => {
+  const i = Number((target as HTMLElement | null)?.closest<HTMLElement>(".line")?.dataset.i);
+  return Number.isInteger(i) ? i : null;
+};
+els.lines.addEventListener("pointerdown", (e) => {
+  const i = lineIndex(e.target);
+  touchedLine = i === null ? null : { i, at: Date.now() };
+});
 els.lines.addEventListener("click", (e) => {
-  const target = (e.target as HTMLElement).closest<HTMLElement>(".line");
-  const i = Number(target?.dataset.i);
-  if (target && Number.isInteger(i)) void ask(true, i);
+  const recent = touchedLine && Date.now() - touchedLine.at < 1_500 ? touchedLine.i : null;
+  touchedLine = null;
+  const i = recent ?? lineIndex(e.target);
+  if (i !== null) void ask(true, i);
 });
 
 els.nudge.addEventListener("click", () => {
@@ -60,8 +73,24 @@ els.copy.addEventListener("click", async () => {
 
 els.auto.addEventListener("change", () => {
   settings.auto = els.auto.checked;
-  saveSettings(settings);
+  persistSettings();
 });
+
+// Offline: say so right away instead of letting calls fail one by one.
+const showOnline = (): void => {
+  if (!navigator.onLine) setStatus("Offline");
+  else setStatus(stt.isListening() ? "Listening" : "Ready");
+};
+window.addEventListener("offline", showOnline);
+window.addEventListener("online", showOnline);
+
+// "Update ready" reloads the page, so offer it only while not listening.
+let reloadForUpdate: (() => void) | null = null;
+const renderUpdatePill = (): void => {
+  els.update.hidden = !reloadForUpdate || stt.isListening();
+};
+window.addEventListener(LISTENING_CHANGED, renderUpdatePill);
+els.update.addEventListener("click", () => reloadForUpdate?.());
 
 initChips();
 initSettings();
@@ -90,9 +119,30 @@ preconnect();
 renderRate();
 void syncRemote(true);
 setupUpdates((reload) => {
-  els.update.hidden = false;
-  els.update.onclick = reload;
+  reloadForUpdate = reload;
+  renderUpdatePill();
 });
-if (state.board) showAnswer(`${settings.boardName || "Board"} loaded. Start listening.`, true);
-setStatus(sttSupported() ? "Ready" : "No speech recognition in this browser");
+
+// Back from a reload mid-meeting: put the transcript and answers back.
+const saved = SIM ? null : loadMeeting();
+if (saved && saved.transcript.length) {
+  state.transcript.push(...saved.transcript);
+  state.session.push(...saved.session);
+  state.answers.push(...saved.answers);
+  renderLines();
+  renderHistory();
+  const last = state.answers[state.answers.length - 1];
+  showAnswer(last ? last.text : "Meeting restored. Tap Start to keep listening.", true);
+  setMeta(`restored ${saved.transcript.length} lines`);
+} else if (!settings.apiKey || !state.board) {
+  showAnswer(
+    !settings.apiKey
+      ? "Welcome. Step 1: tap ⚙︎ and add your API key under Provider, key and language. Step 2: pick a board."
+      : "Step 2: tap ⚙︎ and pick a board (Boards from Claude, or paste one).",
+    true,
+  );
+} else {
+  showAnswer(`${settings.boardName || "Board"} loaded. Start listening.`, true);
+}
+setStatus(!sttSupported() ? "No speech recognition in this browser" : navigator.onLine ? "Ready" : "Offline");
 if (!sttSupported()) setMeta(environment());

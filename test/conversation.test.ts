@@ -88,3 +88,68 @@ describe("settings", () => {
     expect(cleanSecret(" sk-abc\n123 ")).toBe("sk-abc123");
   });
 });
+
+describe("looksAimedAt: fillers and German", () => {
+  it("doesn't fire on English fillers", () => {
+    expect(looksAimedAt("the numbers went up, you know, last quarter", "Aymen")).toBe(false);
+    expect(looksAimedAt("thank you all for joining today", "Aymen")).toBe(false);
+  });
+  it("still fires on a real you", () => {
+    expect(looksAimedAt("you know the pipeline, can you check it", "Aymen")).toBe(true);
+  });
+  it("catches German address", () => {
+    expect(looksAimedAt("kannst du kurz den Stand zeigen", "Aymen")).toBe(true);
+    expect(looksAimedAt("Haben Sie die Zahlen schon gesehen", "Aymen")).toBe(true);
+    expect(looksAimedAt("die Zahlen kommen am Freitag", "Aymen")).toBe(false);
+  });
+});
+
+describe("providerForKey / fixProviderForKey", () => {
+  it("never leaves an Anthropic key on another provider", () => {
+    const s = { ...DEFAULTS, provider: "routeway" as const, apiKey: "sk-ant-abc" };
+    fixProviderForKey(s);
+    expect(s.provider).toBe("anthropic");
+    const c = { ...DEFAULTS, provider: "custom" as const, baseUrl: "https://x.example/v1", apiKey: "sk-ant-abc" };
+    fixProviderForKey(c);
+    expect(c.provider).toBe("anthropic");
+  });
+  it("routes Gemini keys to Gemini and leaves custom keys alone", () => {
+    const g = { ...DEFAULTS, provider: "anthropic" as const, apiKey: "AIzaXYZ" };
+    fixProviderForKey(g);
+    expect(g.provider).toBe("gemini");
+    const c = { ...DEFAULTS, provider: "custom" as const, baseUrl: "https://x.example/v1", apiKey: "sk-other" };
+    fixProviderForKey(c);
+    expect(c.provider).toBe("custom");
+  });
+});
+
+import { clearMeeting, loadMeeting, saveMeeting } from "../src/meeting";
+
+describe("meeting persistence", () => {
+  const mem = () => {
+    const m = new Map<string, string>();
+    return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), removeItem: (k: string) => void m.delete(k) };
+  };
+  it("restores a recent meeting and forgets an old one", () => {
+    const s = mem();
+    saveMeeting({ transcript: [{ text: "hi", at: 1 }], session: [], answers: [] }, 1_000, s);
+    expect(loadMeeting(2_000, s)?.transcript[0]?.text).toBe("hi");
+    expect(loadMeeting(1_000 + 13 * 3_600_000, s)).toBeNull();
+    clearMeeting(s);
+    expect(loadMeeting(2_000, s)).toBeNull();
+  });
+  it("survives junk in storage", () => {
+    const s = mem();
+    s.setItem("live-board.meeting", "{bad");
+    expect(loadMeeting(0, s)).toBeNull();
+  });
+});
+
+describe("CallLimiter.unrecord", () => {
+  it("gives back a call that never left", () => {
+    const l = new CallLimiter(5);
+    l.record(100);
+    l.unrecord(100);
+    expect(l.left(200)).toBe(5);
+  });
+});

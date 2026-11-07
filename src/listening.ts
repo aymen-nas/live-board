@@ -1,13 +1,13 @@
 // The microphone side: speech recognition (or the ?sim script), turning what
 // was heard into transcript lines, and deciding when to ask the model.
 
-import { ask } from "./answering";
+import { ask, cancelAll, isAnswering } from "./answering";
 import { keepWarm } from "./connection";
 import { looksAimedAt, wordCount } from "./conversation";
 import { EarlyFire } from "./early";
 import { keepScreenOn, releaseScreen } from "./screen";
 import { SimStt, simLog } from "./sim";
-import { SIM, isFree, settings, state, underFreeLimit } from "./state";
+import { SIM, everyLine, rememberMeeting, settings, state, underFreeLimit } from "./state";
 import { Stt, sttSupported, type SttCallbacks } from "./stt";
 import { els, environment, setMeta, setStatus, showAnswer } from "./ui";
 import { renderLines, updateContext } from "./view";
@@ -25,6 +25,7 @@ const early = new EarlyFire({
     const index = state.transcript.length - 1;
     renderLines();
     updateContext();
+    rememberMeeting();
     if (SIM) simLog.push({ at, kind: "early", text });
     void ask(false, index);
     return index;
@@ -38,9 +39,10 @@ const early = new EarlyFire({
     if (entry) entry.text = finalText;
     renderLines();
     updateContext();
+    rememberMeeting();
     if (SIM) simLog.push({ at: Date.now(), kind: "final-after-early", text: finalText, ms: gainedMs });
     if (reask && underFreeLimit()) void ask(false, index);
-    else if (!els.answer.classList.contains("thinking")) setMeta(`${els.meta.textContent} · ${gainedMs} ms early`);
+    else if (!isAnswering()) setMeta(`${els.meta.textContent} · ${gainedMs} ms early`);
   },
 });
 
@@ -56,8 +58,9 @@ const callbacks: SttCallbacks = {
     state.session.push({ at: u.at, kind: "heard", text: u.text });
     renderLines();
     updateContext();
+    rememberMeeting();
     if (!settings.auto || wordCount(u.text) < MIN_WORDS) return;
-    if (!isFree()) {
+    if (everyLine()) {
       void ask(false);
     } else if (aimed(u.text)) {
       if (underFreeLimit()) void ask(false);
@@ -73,12 +76,16 @@ const callbacks: SttCallbacks = {
 
 export const stt: Stt | SimStt = SIM ? new SimStt(callbacks) : new Stt(callbacks, settings.lang);
 
+// main.ts shows the "Update ready" pill only while not listening.
+export const LISTENING_CHANGED = "live-board:listening";
+
 function stopped(): void {
   early.reset();
   keepWarm(false);
   releaseScreen();
   els.listen.textContent = "Start";
   els.listen.classList.remove("live");
+  window.dispatchEvent(new Event(LISTENING_CHANGED));
 }
 
 export function toggleListening(): void {
@@ -91,14 +98,20 @@ export function toggleListening(): void {
     showAnswer("This browser has no speech recognition. On iPhone, any browser works; on a computer, use Chrome or Safari.", true);
     return;
   }
+  if (!settings.apiKey || !state.board) {
+    // Still listen (the transcript is useful on its own), but say what's missing now, not mid-meeting.
+    showAnswer(!settings.apiKey ? "Listening, but no API key yet: add one in settings (⚙︎) to get answers." : "Listening, but no board loaded: pick one in settings (⚙︎).", true);
+  }
   stt.start();
   keepWarm(true);
   void keepScreenOn();
   els.listen.textContent = "Stop";
   els.listen.classList.add("live");
+  window.dispatchEvent(new Event(LISTENING_CHANGED));
 }
 
-// "New meeting": forget the pending early line along with the transcript.
+// "New meeting": forget the pending early line and any call in flight.
 export function resetListening(): void {
   early.reset();
+  cancelAll();
 }

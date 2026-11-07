@@ -9,6 +9,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { PROVIDERS, answer, type Provider } from "../src/llm";
 import { buildSystemPrompt, parseBoard } from "../src/board";
 import type { Utterance } from "../src/stt";
+import { windowEndingAt } from "../src/conversation";
 
 const args = process.argv.slice(2);
 const dry = args.includes("--dry");
@@ -28,7 +29,6 @@ const KEY_VAR: Record<Provider, string> = {
   custom: "CUSTOM_API_KEY",
 };
 const PACE_MS = Number(opt("pace") ?? 0); // wait between calls, for rate-limited free plans
-const WINDOW_MS = 90_000;
 const GAP_MS = 4_000; // simulated spacing between utterances
 
 function loadKey(): string {
@@ -83,7 +83,7 @@ async function main(): Promise<void> {
     const text = raw.replace(/^\[me\]\s*/, "");
     t += GAP_MS;
     transcript.push({ text, at: t });
-    const window_ = transcript.filter((u) => u.at >= t - WINDOW_MS).slice(-14);
+    const window_ = windowEndingAt(transcript, transcript.length - 1);
 
     if (dry) {
       console.log(`${String(i + 1).padStart(2)} ${expectAnswer ? "ME " : "   "} ${text}`);

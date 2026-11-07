@@ -19,8 +19,8 @@ const BOARD = parseBoard(
     "THE TEST RUN",
     "The staging city runs every 2 minutes since yesterday evening. First runs looked healthy, about 1 second per run.",
     SEP,
-    "MATTERMOST DELIVERY",
-    "One Mattermost message per alert in a dedicated channel. PT gets added at the end.",
+    "CHAT DELIVERY",
+    "One chat message per alert in a dedicated channel. Operations gets added at the end.",
     SEP,
     "QUESTION BANK",
     "Questions to pick from, word for word. Do you still want the alerts in the chat channel? Is there a maximum number of pings per hour you'd accept? Should alerts run until 22:00 or only office hours?",
@@ -29,10 +29,10 @@ const BOARD = parseBoard(
 
 describe("tokenize", () => {
   it("keeps content words and acronyms, drops fillers", () => {
-    const t = tokenize("Okay so PT asked about the Mattermost channel, yeah, and the SES quota");
-    expect(t.has("pt")).toBe(true);
-    expect(t.has("ses")).toBe(true);
-    expect(t.has("mattermost")).toBe(true);
+    const t = tokenize("Okay so OPS asked about the Slack channel, yeah, and the SMS quota");
+    expect(t.has("ops")).toBe(true);
+    expect(t.has("sms")).toBe(true);
+    expect(t.has("slack")).toBe(true);
     expect(t.has("channel")).toBe(true);
     expect(t.has("okay")).toBe(false);
     expect(t.has("yeah")).toBe(false);
@@ -63,7 +63,7 @@ describe("bestQuestion", () => {
   const index = indexBoard(BOARD);
 
   it("suggests the question that fits the topic", () => {
-    expect(bestQuestion(index, "PT wants pings in the chat channel instead of mails")).toBe(
+    expect(bestQuestion(index, "operations wants pings in the chat channel instead of mails")).toBe(
       "Do you still want the alerts in the chat channel?",
     );
   });
@@ -83,14 +83,14 @@ describe("board library", () => {
   it("saves, replaces by name, lists newest first, deletes", () => {
     const kv = memory();
     saveBoard("Standup", "a", kv, 1);
-    saveBoard("PT oversight", "b", kv, 2);
+    saveBoard("Weekly sync", "b", kv, 2);
     saveBoard("Standup", "c", kv, 3);
     expect(listBoards(kv).map((b) => [b.name, b.text])).toEqual([
       ["Standup", "c"],
-      ["PT oversight", "b"],
+      ["Weekly sync", "b"],
     ]);
     deleteBoard("Standup", kv);
-    expect(listBoards(kv).map((b) => b.name)).toEqual(["PT oversight"]);
+    expect(listBoards(kv).map((b) => b.name)).toEqual(["Weekly sync"]);
   });
 
   it("names a board after the date and its first real card", () => {

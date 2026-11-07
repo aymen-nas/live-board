@@ -6,7 +6,7 @@ import type { SttCallbacks } from "./stt";
 
 export interface SimEvent {
   at: number;
-  kind: "final" | "early" | "final-after-early" | "answer-start" | "answer" | "silent" | "error";
+  kind: "final" | "early" | "final-after-early" | "answer" | "silent" | "error";
   text: string;
   ms?: number;
 }

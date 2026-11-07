@@ -27,6 +27,8 @@ export function sttSupported(): boolean {
   return recognitionCtor() !== null;
 }
 
+const MAX_FAILURES = 5;
+
 export class Stt {
   private rec: any = null;
   private listening = false;
@@ -86,10 +88,17 @@ export class Stt {
     rec.lang = this.lang;
     rec.maxAlternatives = 1;
 
-    rec.onstart = () => this.cb.onStatus("Listening");
+    // After Stop→Start or a language change, the old recognizer still fires
+    // its last events; only the current one may touch state.
+    const current = () => this.rec === rec;
     let failed = false;
 
+    rec.onstart = () => {
+      if (current()) this.cb.onStatus("Listening");
+    };
+
     rec.onresult = (event: any) => {
+      if (!current()) return;
       let interim = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
@@ -105,6 +114,7 @@ export class Stt {
     };
 
     rec.onerror = (event: any) => {
+      if (!current()) return;
       // "no-speech" and "aborted" are routine on iOS; anything else is worth showing.
       if (event.error !== "no-speech" && event.error !== "aborted") {
         failed = true;
@@ -117,32 +127,38 @@ export class Stt {
     };
 
     rec.onend = () => {
+      if (!current()) return;
       this.rec = null;
-      if (!this.listening) return;
-      this.failures = failed ? this.failures + 1 : 0;
-      if (this.failures >= 5) {
-        // The speech service itself is unreachable; flickering won't fix it.
-        this.listening = false;
-        this.cb.onStatus(
-          "Speech service unreachable. iPhone: Settings → General → Keyboard → Enable Dictation, and use a Safari tab. Laptop: Chrome or Safari only.",
-        );
-        this.cb.onGaveUp();
-        return;
-      }
-      // Safari ends sessions after silence or ~1 minute; restart quickly,
-      // but back off when the last session died with an error.
-      const delay = failed ? Math.min(500 * 2 ** this.failures, 5000) : 150;
-      this.restartTimer = window.setTimeout(() => {
-        this.restartTimer = null;
-        if (this.listening) this.spawn(Ctor);
-      }, delay);
+      if (this.listening) this.restartAfter(Ctor, failed);
     };
 
     this.rec = rec;
     try {
       rec.start();
     } catch (err) {
+      this.rec = null;
       this.cb.onStatus(`Could not start mic: ${String(err)}`);
+      if (this.listening) this.restartAfter(Ctor, true);
     }
+  }
+
+  // Safari ends sessions after silence or ~1 minute; restart quickly, but
+  // back off when the last session died with an error, and give up after 5.
+  private restartAfter(Ctor: RecognitionCtor, failed: boolean): void {
+    this.failures = failed ? this.failures + 1 : 0;
+    if (this.failures >= MAX_FAILURES) {
+      // The speech service itself is unreachable; flickering won't fix it.
+      this.listening = false;
+      this.cb.onStatus(
+        "Speech service unreachable. iPhone: Settings → General → Keyboard → Enable Dictation, and use a Safari tab. Laptop: Chrome or Safari only.",
+      );
+      this.cb.onGaveUp();
+      return;
+    }
+    const delay = failed ? Math.min(500 * 2 ** this.failures, 5000) : 150;
+    this.restartTimer = window.setTimeout(() => {
+      this.restartTimer = null;
+      if (this.listening) this.spawn(Ctor);
+    }, delay);
   }
 }

@@ -5,7 +5,9 @@ import { CallLimiter } from "./conversation";
 import type { RemoteBoard } from "./github";
 import type { IndexedBoard } from "./match";
 import type { SessionEntry } from "./session";
-import { fixProviderForKey, loadSettings } from "./settings";
+import { PROVIDERS } from "./llm";
+import { clearMeeting, saveMeeting } from "./meeting";
+import { fixProviderForKey, loadSettings, saveSettings } from "./settings";
 import { simEnabled } from "./sim";
 import type { Utterance } from "./stt";
 
@@ -28,7 +30,37 @@ export const state = {
   remoteBoards: [] as RemoteBoard[],
 };
 
-// Routeway's free plan allows 5 calls a minute; Anthropic has no such cap here.
-export const limiter = new CallLimiter(5);
-export const isFree = (): boolean => settings.provider !== "anthropic";
-export const underFreeLimit = (): boolean => !isFree() || limiter.left() > 0;
+// Free plans cap calls per minute (Routeway: 5). The limiter keeps the
+// counter honest; providers without a cap aren't limited.
+const limiters = new Map<number, CallLimiter>();
+export function limiter(): CallLimiter | null {
+  const rpm = PROVIDERS[settings.provider].rpm;
+  if (!rpm) return null;
+  let l = limiters.get(rpm);
+  if (!l) limiters.set(rpm, (l = new CallLimiter(rpm)));
+  return l;
+}
+export const underFreeLimit = (): boolean => (limiter()?.left() ?? 1) > 0;
+// Paid providers answer every line; the others only lines aimed at me.
+export const everyLine = (): boolean => PROVIDERS[settings.provider].everyLine;
+
+// ?sim borrows a sample board (and in dev a key) without saving them.
+export function persistSettings(): void {
+  if (!SIM) saveSettings(settings);
+}
+
+// Save the meeting at most once a second (it survives a reload; see meeting.ts).
+let saveTimer: number | null = null;
+export function rememberMeeting(): void {
+  if (SIM || saveTimer !== null) return;
+  saveTimer = window.setTimeout(() => {
+    saveTimer = null;
+    saveMeeting({ transcript: state.transcript, session: state.session, answers: state.answers });
+  }, 1_000);
+}
+
+export function forgetMeeting(): void {
+  if (saveTimer !== null) window.clearTimeout(saveTimer);
+  saveTimer = null;
+  clearMeeting();
+}
