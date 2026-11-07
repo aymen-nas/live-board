@@ -91,3 +91,16 @@ export function bestQuestion(
   }
   return bestScore >= minScore ? best : null;
 }
+
+// Is `later` the same sentence as `early` (the live text answered before the
+// final arrived)? The final repeats it with punctuation fixed and sometimes a
+// word changed, often the name ("Amen" -> "Aymen"), or carries on past it.
+export function sameSentence(early: string, later: string): boolean {
+  const words = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, "").split(/\s+/).filter(Boolean);
+  const a = words(early);
+  const b = words(later);
+  if (a.length === 0 || b.length === 0) return false;
+  if (a.slice(0, 3).join(" ") === b.slice(0, 3).join(" ")) return true;
+  const inLater = new Set(b);
+  return a.filter((w) => inLater.has(w)).length >= 0.6 * a.length;
+}

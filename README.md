@@ -58,6 +58,15 @@ Measured with `npm run replay -- --provider routeway --pace 12500` on the
 sample board: 12/12 lines behaved as expected on
 `gemma-4-26b-a4b-it-luminous:free`, first token p50 1.4 s, max 6 s.
 
+**Speed.** When a line that looks aimed at you has stopped changing for
+600 ms, the app answers it before the speech engine marks it final. The final
+text then replaces it, and the app asks again only if it added 4 or more
+words. The small line at the top shows the gain, e.g. `900 ms · 700 ms early`.
+The connection to the provider opens when the app loads and stays warm while
+listening. Sending only the matching cards instead of the whole board made no
+difference on the free Gemma model (8 calls, 7.7k vs 3k tokens: the wait is
+Routeway's queue), so the whole board is always sent.
+
 ## Develop
 
 ```bash

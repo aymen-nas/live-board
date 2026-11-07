@@ -3,7 +3,7 @@ import { buildSystemPrompt, parseBoard, type Board, type Card } from "./board";
 import { PROVIDERS, answer, warmCache, type Provider } from "./llm";
 import { Stt, sttSupported, type SttCallbacks, type Utterance } from "./stt";
 import { SimStt, devKey, loadSimBoard, simEnabled, simLog } from "./sim";
-import { bestCard, bestQuestion, indexBoard, type IndexedBoard } from "./match";
+import { bestCard, bestQuestion, indexBoard, sameSentence, type IndexedBoard } from "./match";
 import { defaultBoardName, deleteBoard, listBoards, saveBoard } from "./library";
 import { exportSession, type SessionEntry } from "./session";
 import { fetchRemoteBoard, listRemoteBoards, type RemoteBoard } from "./github";
@@ -494,24 +494,85 @@ async function ask(forced: boolean, upto = transcript.length - 1): Promise<void>
   }
 }
 
+// ---------- early fire ----------
+// The speech engine marks a sentence final only after a pause. When the live
+// text is aimed at me and has stopped changing for 600 ms, answer it already;
+// the final result then replaces the text and only asks again if it added a lot.
+
+const EARLY_MS = 600;
+const EARLY_MIN_WORDS = 5;
+const REASK_EXTRA_WORDS = 4;
+let earlyTimer: number | null = null;
+let early: { index: number; text: string; entry: SessionEntry; firedAt: number } | null = null;
+
+const wordCount = (t: string): number => t.trim().split(/\s+/).filter(Boolean).length;
+
+function underFreeLimit(): boolean {
+  return !isFree() || callsLastMinute() < FREE_CALLS_PER_MINUTE;
+}
+
+function fireEarly(text: string): void {
+  earlyTimer = null;
+  if (early || !underFreeLimit()) return;
+  const now = Date.now();
+  const entry: SessionEntry = { at: now, kind: "heard", text };
+  transcript.push({ text, at: now });
+  session.push(entry);
+  early = { index: transcript.length - 1, text, entry, firedAt: now };
+  renderLines();
+  updateContext();
+  if (SIM) simLog.push({ at: now, kind: "early", text });
+  void ask(false, early.index);
+}
+
+// Returns true when the final belonged to the early-fired sentence.
+function settleEarly(u: Utterance): boolean {
+  if (!early) return false;
+  const e = early;
+  early = null;
+  if (!sameSentence(e.text, u.text)) return false; // that sentence never got a final; keep it as heard
+  transcript[e.index] = { text: u.text, at: transcript[e.index]!.at };
+  e.entry.text = u.text;
+  renderLines();
+  updateContext();
+  const gained = u.at - e.firedAt;
+  if (SIM) simLog.push({ at: u.at, kind: "final-after-early", text: u.text, ms: gained });
+  if (wordCount(u.text) - wordCount(e.text) >= REASK_EXTRA_WORDS && underFreeLimit()) {
+    void ask(false, e.index);
+  } else if (!answerEl.classList.contains("thinking")) {
+    setMeta(`${metaEl.textContent} · ${gained} ms early`);
+  }
+  return true;
+}
+
 // ---------- speech ----------
 
 const sttCallbacks: SttCallbacks = {
   onInterim: (text) => {
     interimEl.textContent = text;
+    if (earlyTimer !== null) window.clearTimeout(earlyTimer);
+    earlyTimer = null;
+    if (!text) return;
+    // A new sentence started while the early one never got a final: keep it as heard.
+    if (early && !sameSentence(early.text, text)) early = null;
+    if (early || !settings.auto || wordCount(text) < EARLY_MIN_WORDS || !looksAimedAtMe(text)) return;
+    earlyTimer = window.setTimeout(() => fireEarly(text), EARLY_MS);
   },
   onFinal: (u) => {
+    if (earlyTimer !== null) window.clearTimeout(earlyTimer);
+    earlyTimer = null;
+    interimEl.textContent = "";
+    if (settleEarly(u)) return;
     transcript.push(u);
     session.push({ at: u.at, kind: "heard", text: u.text });
-    interimEl.textContent = "";
     renderLines();
     updateContext();
     // "okay", "yeah", "mhm": not worth a call.
-    if (!settings.auto || u.text.split(/\s+/).length < 3) return;
+    if (!settings.auto || wordCount(u.text) < 3) return;
     if (!isFree()) {
       void ask(false);
     } else if (looksAimedAtMe(u.text)) {
-      if (callsLastMinute() < FREE_CALLS_PER_MINUTE) void ask(false);
+      if (underFreeLimit()) void ask(false);
       else setMeta("rate limit: tap a line or Answer");
     }
   },
@@ -520,6 +581,7 @@ const sttCallbacks: SttCallbacks = {
     if (text.startsWith("Mic error") || text.startsWith("Speech service")) setMeta(environment());
   },
   onGaveUp: () => {
+    keepWarm(false);
     releaseScreen();
     listenBtn.textContent = "Start";
     listenBtn.classList.remove("live");
@@ -528,9 +590,49 @@ const sttCallbacks: SttCallbacks = {
 
 const stt: Stt | SimStt = SIM ? new SimStt(sttCallbacks) : new Stt(sttCallbacks, settings.lang);
 
+// ---------- warm connection ----------
+// A cold call pays DNS, TCP and TLS before the request even leaves (a few
+// round trips on mobile). Open the connection early and keep it open while
+// listening with a tiny request that doesn't count as a model call.
+
+let warmTimer: number | null = null;
+
+function apiOrigin(): string | null {
+  if (settings.provider === "anthropic") return "https://api.anthropic.com";
+  try {
+    return new URL(settings.baseUrl).origin;
+  } catch {
+    return null;
+  }
+}
+
+function preconnect(): void {
+  const origin = apiOrigin();
+  if (!origin || document.head.querySelector(`link[rel="preconnect"][href="${origin}"]`)) return;
+  const link = document.createElement("link");
+  link.rel = "preconnect";
+  link.href = origin;
+  link.crossOrigin = "anonymous"; // same connection pool as the API calls (no cookies)
+  document.head.append(link);
+}
+
+function pingApi(): void {
+  const origin = apiOrigin();
+  if (origin) fetch(`${origin}/`, { mode: "no-cors", cache: "no-store" }).catch(() => {});
+}
+
+function keepWarm(on: boolean): void {
+  if (warmTimer !== null) window.clearInterval(warmTimer);
+  warmTimer = null;
+  if (!on) return;
+  pingApi();
+  warmTimer = window.setInterval(pingApi, 45_000);
+}
+
 function toggleListening(): void {
   if (stt.isListening()) {
     stt.stop();
+    keepWarm(false);
     releaseScreen();
     listenBtn.textContent = "Start";
     listenBtn.classList.remove("live");
@@ -540,6 +642,7 @@ function toggleListening(): void {
       return;
     }
     stt.start();
+    keepWarm(true);
     void keepScreenOn();
     listenBtn.textContent = "Stop";
     listenBtn.classList.add("live");
@@ -681,6 +784,7 @@ $("saveBtn").addEventListener("click", () => {
   if (settings.boardText.trim()) saveBoard(settings.boardName, settings.boardText);
   saveSettings(settings);
   loadBoard();
+  preconnect();
   renderRate();
   if (board && settings.apiKey && settings.provider === "anthropic") {
     setStatus("Warming cache…");
@@ -716,6 +820,7 @@ if (SIM) {
   settings.boardName = "Sample board";
 }
 loadBoard();
+preconnect();
 renderRate();
 void syncRemote(true);
 if (board) showAnswer(`${settings.boardName || "Board"} loaded. Start listening.`, true);

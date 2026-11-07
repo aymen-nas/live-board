@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseBoard } from "../src/board";
-import { bestCard, bestQuestion, indexBoard, tokenize } from "../src/match";
+import { bestCard, bestQuestion, indexBoard, sameSentence, tokenize } from "../src/match";
 import { defaultBoardName, deleteBoard, listBoards, saveBoard } from "../src/library";
 import { exportSession } from "../src/session";
 
@@ -116,5 +116,19 @@ describe("exportSession", () => {
 
   it("is empty when nothing was heard", () => {
     expect(exportSession([])).toBe("");
+  });
+});
+
+describe("sameSentence (early fire)", () => {
+  it("matches the final that carries on past the live text", () => {
+    expect(sameSentence("Aymen can you tell us", "Aymen, can you tell us about the cost?")).toBe(true);
+  });
+  it("matches when the engine fixes the name at the start", () => {
+    expect(sameSentence("Amen where are we with the rain alerts", "Aymen, where are we with the rain alerts?")).toBe(true);
+  });
+  it("does not match a new sentence", () => {
+    expect(sameSentence("Aymen where are we with the rain alerts", "Okay")).toBe(false);
+    expect(sameSentence("Aymen where are we with the rain alerts", "And the next topic is the audit")).toBe(false);
+    expect(sameSentence("Aymen where are we with the rain alerts", "")).toBe(false);
   });
 });

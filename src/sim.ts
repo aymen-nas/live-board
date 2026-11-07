@@ -6,7 +6,7 @@ import type { SttCallbacks } from "./stt";
 
 export interface SimEvent {
   at: number;
-  kind: "final" | "answer-start" | "answer" | "silent" | "error";
+  kind: "final" | "early" | "final-after-early" | "answer-start" | "answer" | "silent" | "error";
   text: string;
   ms?: number;
 }
@@ -21,6 +21,9 @@ export function simEnabled(): boolean {
 
 const WORD_MS = 120; // interim text grows by one word every 120 ms
 const PAUSE_MS = 2500; // silence between utterances
+// Real engines wait for a pause before they mark a sentence final; the live
+// text sits complete on screen meanwhile. Early fire answers inside this gap.
+const FINAL_LAG_MS = 1200;
 
 export class SimStt {
   private listening = false;
@@ -67,9 +70,9 @@ export class SimStt {
     const step = () => {
       if (!this.listening) return;
       shown++;
-      if (shown < words.length) {
+      if (shown <= words.length) {
         this.cb.onInterim(words.slice(0, shown).join(" "));
-        this.timer = window.setTimeout(step, WORD_MS);
+        this.timer = window.setTimeout(step, shown === words.length ? FINAL_LAG_MS : WORD_MS);
       } else {
         const text = words.join(" ");
         simLog.push({ at: Date.now(), kind: "final", text });
