@@ -1,8 +1,11 @@
 import "./style.css";
-import { buildSystemPrompt, parseBoard, type Board } from "./board";
+import { buildSystemPrompt, parseBoard, type Board, type Card } from "./board";
 import { PROVIDERS, answer, warmCache, type Provider } from "./llm";
 import { Stt, sttSupported, type SttCallbacks, type Utterance } from "./stt";
 import { SimStt, devKey, loadSimBoard, simEnabled, simLog } from "./sim";
+import { bestCard, bestQuestion, indexBoard, type IndexedBoard } from "./match";
+import { defaultBoardName, deleteBoard, listBoards, saveBoard } from "./library";
+import { exportSession, type SessionEntry } from "./session";
 
 // ---------- persisted settings ----------
 
@@ -14,6 +17,7 @@ interface Settings {
   model: string;
   lang: string;
   boardText: string;
+  boardName: string;
   auto: boolean;
 }
 
@@ -25,6 +29,7 @@ const DEFAULTS: Settings = {
   model: PROVIDERS.routeway.model,
   lang: "en-US",
   boardText: "",
+  boardName: "",
   auto: true,
 };
 
@@ -60,19 +65,28 @@ function saveSettings(s: Settings): void {
 
 // ---------- state ----------
 
+const SIM = simEnabled();
 const settings = loadSettings();
 fixProviderForKey(settings);
 let board: Board | null = null;
+let index: IndexedBoard | null = null;
 let systemPrompt = "";
 const transcript: Utterance[] = [];
+const session: SessionEntry[] = [];
+const answers: { at: number; text: string }[] = [];
+const shownQuestions = new Set<string>();
 let inflight: AbortController | null = null;
 let questionIndex = 0;
 let wakeLock: any = null;
+let currentCard: Card | null = null;
 
 const WINDOW_MS = 90_000;
 const MAX_LINES = 14;
 const FREE_CALLS_PER_MINUTE = 5; // Routeway's free plan; Gemini's free tier is higher
+const HISTORY = 3; // previous answers kept visible under the current one
 const callTimes: number[] = [];
+
+const isFree = (): boolean => settings.provider !== "anthropic";
 
 // Free providers are rate-limited, so only utterances that look aimed at me
 // get an automatic call; everything else waits for the Answer button.
@@ -82,12 +96,10 @@ function looksAimedAtMe(text: string): boolean {
   return lower.includes(name) || /\byou\b|\byour\b/.test(lower) || /\?\s*$/.test(text);
 }
 
-function underRateLimit(): boolean {
+function callsLastMinute(): number {
   const now = Date.now();
   while (callTimes.length && callTimes[0]! < now - 60_000) callTimes.shift();
-  if (callTimes.length >= FREE_CALLS_PER_MINUTE) return false;
-  callTimes.push(now);
-  return true;
+  return callTimes.length;
 }
 
 // ---------- DOM ----------
@@ -98,43 +110,67 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
   <header>
     <span id="status">Idle</span>
     <span id="meta"></span>
+    <span id="rate" class="rate" title="Calls left this minute"></span>
     <button id="settingsBtn" class="ghost" aria-label="Settings">⚙︎</button>
   </header>
 
   <main>
     <div id="answer" class="answer muted">Paste a board in settings, then start listening.</div>
+    <div id="history" class="history"></div>
+    <div id="chips" class="chips"></div>
     <div id="interim" class="interim"></div>
-    <div id="lines" class="lines"></div>
+    <div id="lines" class="lines" aria-label="Tap a line to answer it"></div>
   </main>
 
   <footer>
     <button id="listenBtn" class="primary">Start</button>
     <button id="answerBtn">Answer</button>
     <button id="nudgeBtn">Question</button>
+    <button id="copyBtn" class="ghost" aria-label="Copy transcript">⧉</button>
     <label class="auto"><input type="checkbox" id="autoChk"> auto</label>
   </footer>
+
+  <dialog id="cardView">
+    <form method="dialog">
+      <h2 id="cardTitle"></h2>
+      <p id="cardBody" class="card-body"></p>
+      <menu><button value="close" class="primary">Close</button></menu>
+    </form>
+  </dialog>
 
   <dialog id="settings">
     <form method="dialog">
       <h2>Settings</h2>
-      <label>Provider
-        <select id="provider">
-          ${(Object.keys(PROVIDERS) as Provider[]).map((p) => `<option value="${p}">${PROVIDERS[p].label}</option>`).join("")}
-        </select>
+      <label>Saved boards
+        <span class="row">
+          <select id="library"></select>
+          <button id="libLoad" type="button">Load</button>
+          <button id="libDelete" type="button" class="ghost">Delete</button>
+        </span>
       </label>
-      <div id="providerNote" class="hint"></div>
-      <label>API key <input id="apiKey" type="password" autocomplete="off" placeholder="sk-…"></label>
-      <label>Model <input id="model" type="text" autocomplete="off" spellcheck="false"></label>
-      <label>Base URL <input id="baseUrl" type="url" autocomplete="off" spellcheck="false" placeholder="https://…/v1"></label>
-      <label>My name <input id="myName" type="text"></label>
-      <label>Language
-        <select id="lang">
-          <option value="en-US">English</option>
-          <option value="de-DE">Deutsch</option>
-        </select>
-      </label>
-      <label>Board <textarea id="boardText" rows="8" placeholder="OPENER — WORD FOR WORD …"></textarea></label>
+      <label>Board name <input id="boardName" type="text" autocomplete="off" placeholder="07.11 PT oversight"></label>
+      <label>Board <textarea id="boardText" rows="7" placeholder="OPENER — WORD FOR WORD …"></textarea></label>
       <div id="boardInfo" class="hint"></div>
+      <details>
+        <summary>Provider, key and language</summary>
+        <label>Provider
+          <select id="provider">
+            ${(Object.keys(PROVIDERS) as Provider[]).map((p) => `<option value="${p}">${PROVIDERS[p].label}</option>`).join("")}
+          </select>
+        </label>
+        <div id="providerNote" class="hint"></div>
+        <label>API key <input id="apiKey" type="password" autocomplete="off" placeholder="sk-…"></label>
+        <label>Model <input id="model" type="text" autocomplete="off" spellcheck="false"></label>
+        <label>Base URL <input id="baseUrl" type="url" autocomplete="off" spellcheck="false" placeholder="https://…/v1"></label>
+        <label>My name <input id="myName" type="text"></label>
+        <label>Language
+          <select id="lang">
+            <option value="en-US">English</option>
+            <option value="de-DE">Deutsch</option>
+          </select>
+        </label>
+        <button id="clearBtn" type="button" class="ghost">New meeting: clear transcript</button>
+      </details>
       <menu>
         <button value="cancel" class="ghost">Close</button>
         <button id="saveBtn" value="save" class="primary">Save &amp; load board</button>
@@ -145,14 +181,19 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
 
 const statusEl = $("status");
 const metaEl = $("meta");
+const rateEl = $("rate");
 const answerEl = $("answer");
+const historyEl = $("history");
+const chipsEl = $("chips");
 const interimEl = $("interim");
 const linesEl = $("lines");
 const listenBtn = $<HTMLButtonElement>("listenBtn");
 const answerBtn = $<HTMLButtonElement>("answerBtn");
 const nudgeBtn = $<HTMLButtonElement>("nudgeBtn");
+const copyBtn = $<HTMLButtonElement>("copyBtn");
 const autoChk = $<HTMLInputElement>("autoChk");
 const dialog = $<HTMLDialogElement>("settings");
+const cardDialog = $<HTMLDialogElement>("cardView");
 
 // ---------- helpers ----------
 
@@ -161,7 +202,7 @@ function setStatus(text: string): void {
 }
 
 // Shown next to mic errors so the environment is obvious at a glance:
-// "Safari 18 · home-screen app" vs "Chrome iOS · tab" explains most failures.
+// "Safari iOS 18.1 · home-screen app" explains most failures.
 function environment(): string {
   const ua = navigator.userAgent;
   const browser = /CriOS/.test(ua) ? "Chrome iOS" : /FxiOS/.test(ua) ? "Firefox iOS" : /EdgiOS/.test(ua) ? "Edge iOS" : /Safari/.test(ua) && /iPhone|iPad/.test(ua) ? "Safari iOS" : /Chrome\//.test(ua) ? "Chrome" : /Safari/.test(ua) ? "Safari" : "other browser";
@@ -175,39 +216,122 @@ function setMeta(text: string): void {
   metaEl.textContent = text;
 }
 
+function renderRate(): void {
+  rateEl.textContent = isFree() ? `${Math.max(0, FREE_CALLS_PER_MINUTE - callsLastMinute())}/${FREE_CALLS_PER_MINUTE}` : "";
+}
+
 function showAnswer(text: string, muted = false): void {
   answerEl.textContent = text;
   answerEl.classList.toggle("muted", muted);
 }
 
-function recentTranscript(): Utterance[] {
-  const cutoff = Date.now() - WINDOW_MS;
-  const recent = transcript.filter((u) => u.at >= cutoff);
-  return recent.slice(-MAX_LINES);
-}
-
-function renderLines(): void {
-  linesEl.innerHTML = recentTranscript()
-    .slice(-5)
-    .map((u) => `<div>${escapeHtml(u.text)}</div>`)
-    .join("");
+function flash(): void {
+  answerEl.classList.remove("fresh");
+  void answerEl.offsetWidth; // restart the animation
+  answerEl.classList.add("fresh");
 }
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
+function recentIndexes(): number[] {
+  const cutoff = Date.now() - WINDOW_MS;
+  const out: number[] = [];
+  transcript.forEach((u, i) => {
+    if (u.at >= cutoff) out.push(i);
+  });
+  return out.slice(-MAX_LINES);
+}
+
+// The window the model sees: everything up to `upto` within 90 seconds of it.
+function windowEndingAt(upto: number): Utterance[] {
+  const end = transcript[upto];
+  if (!end) return [];
+  return transcript
+    .slice(0, upto + 1)
+    .filter((u) => u.at >= end.at - WINDOW_MS)
+    .slice(-MAX_LINES);
+}
+
+function renderLines(): void {
+  linesEl.innerHTML = recentIndexes()
+    .slice(-5)
+    .map((i) => `<button class="line" data-i="${i}">${escapeHtml(transcript[i]!.text)}</button>`)
+    .join("");
+}
+
+function renderHistory(): void {
+  // answers[last] is on screen; show the ones before it, newest first.
+  historyEl.innerHTML = answers
+    .slice(0, -1)
+    .slice(-HISTORY)
+    .reverse()
+    .map((a) => `<div>${escapeHtml(a.text)}</div>`)
+    .join("");
+}
+
+function renderChips(questionChip: string | null): void {
+  const parts: string[] = [];
+  if (currentCard) parts.push(`<button class="chip" id="cardChip">📌 ${escapeHtml(currentCard.title)}</button>`);
+  if (questionChip) parts.push(`<button class="chip q" id="questionChip">💡 ${escapeHtml(questionChip)}</button>`);
+  chipsEl.innerHTML = parts.join("");
+  $("cardChip")?.addEventListener("click", () => {
+    if (!currentCard) return;
+    $("cardTitle").textContent = currentCard.title;
+    $("cardBody").textContent = currentCard.body;
+    cardDialog.showModal();
+  });
+  $("questionChip")?.addEventListener("click", () => {
+    if (!questionChip) return;
+    showAnswer(questionChip);
+    flash();
+    shownQuestions.add(questionChip);
+    renderChips(null);
+  });
+}
+
+// Topic tracking on every utterance; no API call.
+let lastAnswerAt = 0;
+function updateContext(): void {
+  if (!index) return;
+  const recentText = transcript
+    .slice(-3)
+    .map((u) => u.text)
+    .join(" ");
+  currentCard = bestCard(index, recentText) ?? currentCard;
+  // Offer a question only when no answer has come in the last minute.
+  const quiet = Date.now() - lastAnswerAt > 60_000;
+  const q = quiet ? bestQuestion(index, recentText, shownQuestions) : null;
+  renderChips(q);
+}
+
 function loadBoard(): void {
   if (!settings.boardText.trim()) {
     board = null;
+    index = null;
     systemPrompt = "";
     $("boardInfo").textContent = "No board loaded.";
     return;
   }
   board = parseBoard(settings.boardText);
+  index = indexBoard(board);
   systemPrompt = buildSystemPrompt(board, settings.myName);
   questionIndex = 0;
+  shownQuestions.clear();
+  currentCard = null;
+  renderChips(null);
   $("boardInfo").textContent = `${board.cards.length} cards, ${board.questions.length} questions, ~${Math.round(systemPrompt.length / 4)} tokens`;
+}
+
+function renderLibrary(): void {
+  const boards = listBoards();
+  const select = $<HTMLSelectElement>("library");
+  select.innerHTML = boards.length
+    ? boards.map((b) => `<option value="${escapeHtml(b.name)}">${escapeHtml(b.name)}</option>`).join("")
+    : `<option value="">No saved boards yet</option>`;
+  select.disabled = boards.length === 0;
+  if (settings.boardName) select.value = settings.boardName;
 }
 
 async function keepScreenOn(): Promise<void> {
@@ -229,7 +353,7 @@ function releaseScreen(): void {
 
 // ---------- answering ----------
 
-async function ask(forced: boolean): Promise<void> {
+async function ask(forced: boolean, upto = transcript.length - 1): Promise<void> {
   if (!settings.apiKey) {
     showAnswer("Add your API key in settings.", true);
     return;
@@ -238,19 +362,24 @@ async function ask(forced: boolean): Promise<void> {
     showAnswer("Paste a board in settings first.", true);
     return;
   }
-  const window_ = recentTranscript();
+  const window_ = windowEndingAt(upto);
   if (window_.length === 0) {
     showAnswer("Nothing heard yet.", true);
     return;
   }
 
-  // Latest wins: a newer utterance cancels the answer in flight.
+  // Latest wins: a newer request cancels the answer in flight.
   inflight?.abort();
   const controller = new AbortController();
   inflight = controller;
 
-  const askedAt = window_[window_.length - 1]!.at;
+  const askedAt = forced ? Date.now() : window_[window_.length - 1]!.at;
   answerEl.classList.add("thinking");
+  callTimes.push(Date.now());
+  renderRate();
+
+  // Keep the answer on screen as history before replacing it.
+  let replaced = false;
 
   try {
     const result = await answer({
@@ -263,13 +392,27 @@ async function ask(forced: boolean): Promise<void> {
       forced,
       signal: controller.signal,
       onFirstToken: () => setMeta(`${Date.now() - askedAt} ms`),
-      onDelta: (text) => showAnswer(text),
+      onDelta: (text) => {
+        if (!replaced) {
+          replaced = true;
+          flash();
+        }
+        showAnswer(text);
+      },
     });
     if (controller.signal.aborted) return;
     if (result.silent) {
+      // Nothing for me: put the previous answer back if streaming had started.
+      const last = answers[answers.length - 1];
+      if (last) showAnswer(last.text);
       answerEl.classList.add("muted");
     } else {
       showAnswer(result.text);
+      answers.push({ at: Date.now(), text: result.text });
+      session.push({ at: Date.now(), kind: "answer", text: result.text });
+      lastAnswerAt = Date.now();
+      renderHistory();
+      renderChips(null);
     }
     if (SIM) simLog.push({ at: Date.now(), kind: result.silent ? "silent" : "answer", text: result.text, ms: Date.now() - askedAt });
     if (settings.provider === "anthropic") {
@@ -278,8 +421,9 @@ async function ask(forced: boolean): Promise<void> {
     }
   } catch (err: any) {
     if (controller.signal.aborted) return;
-    showAnswer(`Error: ${err?.message ?? String(err)}`, true);
-    if (SIM) simLog.push({ at: Date.now(), kind: "error", text: String(err?.message ?? err) });
+    const msg = String(err?.message ?? err);
+    showAnswer(/429/.test(msg) ? "Rate limit reached; wait a few seconds." : `Error: ${msg}`, true);
+    if (SIM) simLog.push({ at: Date.now(), kind: "error", text: msg });
   } finally {
     if (inflight === controller) inflight = null;
     answerEl.classList.remove("thinking");
@@ -288,34 +432,34 @@ async function ask(forced: boolean): Promise<void> {
 
 // ---------- speech ----------
 
-const SIM = simEnabled();
-
 const sttCallbacks: SttCallbacks = {
-    onInterim: (text) => {
-      interimEl.textContent = text;
-    },
-    onFinal: (u) => {
-      transcript.push(u);
-      interimEl.textContent = "";
-      renderLines();
-      // "okay", "yeah", "mhm": not worth a call.
-      if (!settings.auto || u.text.split(/\s+/).length < 3) return;
-      if (settings.provider === "anthropic") {
-        void ask(false);
-      } else if (looksAimedAtMe(u.text)) {
-        if (underRateLimit()) void ask(false);
-        else setMeta("rate limit: use Answer");
-      }
-    },
-    onStatus: (text) => {
-      setStatus(text);
-      if (text.startsWith("Mic error") || text.startsWith("Speech service")) setMeta(environment());
-    },
-    onGaveUp: () => {
-      releaseScreen();
-      listenBtn.textContent = "Start";
-      listenBtn.classList.remove("live");
-    },
+  onInterim: (text) => {
+    interimEl.textContent = text;
+  },
+  onFinal: (u) => {
+    transcript.push(u);
+    session.push({ at: u.at, kind: "heard", text: u.text });
+    interimEl.textContent = "";
+    renderLines();
+    updateContext();
+    // "okay", "yeah", "mhm": not worth a call.
+    if (!settings.auto || u.text.split(/\s+/).length < 3) return;
+    if (!isFree()) {
+      void ask(false);
+    } else if (looksAimedAtMe(u.text)) {
+      if (callsLastMinute() < FREE_CALLS_PER_MINUTE) void ask(false);
+      else setMeta("rate limit: tap a line or Answer");
+    }
+  },
+  onStatus: (text) => {
+    setStatus(text);
+    if (text.startsWith("Mic error") || text.startsWith("Speech service")) setMeta(environment());
+  },
+  onGaveUp: () => {
+    releaseScreen();
+    listenBtn.textContent = "Start";
+    listenBtn.classList.remove("live");
+  },
 };
 
 const stt: Stt | SimStt = SIM ? new SimStt(sttCallbacks) : new Stt(sttCallbacks, settings.lang);
@@ -328,7 +472,7 @@ function toggleListening(): void {
     listenBtn.classList.remove("live");
   } else {
     if (!SIM && !sttSupported()) {
-      showAnswer("This browser has no speech recognition. On iPhone, open this page in Safari.", true);
+      showAnswer("This browser has no speech recognition. On iPhone, any browser works; on a computer, use Chrome or Safari.", true);
       return;
     }
     stt.start();
@@ -342,14 +486,44 @@ function toggleListening(): void {
 
 listenBtn.addEventListener("click", toggleListening);
 answerBtn.addEventListener("click", () => void ask(true));
+
+// Tap a transcript line to get the answer to exactly that line.
+linesEl.addEventListener("click", (e) => {
+  const target = (e.target as HTMLElement).closest<HTMLElement>(".line");
+  if (!target) return;
+  const i = Number(target.dataset.i);
+  if (Number.isInteger(i)) void ask(true, i);
+});
+
 nudgeBtn.addEventListener("click", () => {
   if (!board || board.questions.length === 0) {
     showAnswer("No question bank in this board.", true);
     return;
   }
-  showAnswer(board.questions[questionIndex % board.questions.length]!);
+  const q = board.questions[questionIndex % board.questions.length]!;
+  showAnswer(q);
+  flash();
+  shownQuestions.add(q);
   questionIndex++;
 });
+
+copyBtn.addEventListener("click", async () => {
+  const text = exportSession(session, settings.boardName);
+  if (!text) {
+    setStatus("Nothing to copy yet");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    setStatus(`Copied ${session.length} lines`);
+  } catch {
+    // Clipboard blocked: show it so it can be selected by hand.
+    $("cardTitle").textContent = "Transcript";
+    $("cardBody").textContent = text;
+    cardDialog.showModal();
+  }
+});
+
 autoChk.addEventListener("change", () => {
   settings.auto = autoChk.checked;
   saveSettings(settings);
@@ -367,6 +541,33 @@ $<HTMLSelectElement>("provider").addEventListener("change", (e) => {
   applyProviderDefaults((e.target as HTMLSelectElement).value as Provider);
 });
 
+$("libLoad").addEventListener("click", () => {
+  const name = $<HTMLSelectElement>("library").value;
+  const saved = listBoards().find((b) => b.name === name);
+  if (!saved) return;
+  $<HTMLInputElement>("boardName").value = saved.name;
+  $<HTMLTextAreaElement>("boardText").value = saved.text;
+});
+
+$("libDelete").addEventListener("click", () => {
+  const name = $<HTMLSelectElement>("library").value;
+  if (!name) return;
+  deleteBoard(name);
+  renderLibrary();
+});
+
+$("clearBtn").addEventListener("click", () => {
+  transcript.length = 0;
+  session.length = 0;
+  answers.length = 0;
+  shownQuestions.clear();
+  currentCard = null;
+  renderLines();
+  renderHistory();
+  renderChips(null);
+  showAnswer("Transcript cleared.", true);
+});
+
 $("settingsBtn").addEventListener("click", () => {
   $<HTMLSelectElement>("provider").value = settings.provider;
   $<HTMLInputElement>("apiKey").value = settings.apiKey;
@@ -376,18 +577,19 @@ $("settingsBtn").addEventListener("click", () => {
   $<HTMLInputElement>("baseUrl").disabled = settings.provider === "anthropic";
   $("providerNote").textContent = PROVIDERS[settings.provider].note;
   $<HTMLSelectElement>("lang").value = settings.lang;
+  $<HTMLInputElement>("boardName").value = settings.boardName;
   $<HTMLTextAreaElement>("boardText").value = settings.boardText;
+  renderLibrary();
   dialog.showModal();
 });
 
 $("saveBtn").addEventListener("click", () => {
   settings.provider = $<HTMLSelectElement>("provider").value as Provider;
   settings.baseUrl = $<HTMLInputElement>("baseUrl").value.trim();
-  settings.apiKey = $<HTMLInputElement>("apiKey").value.trim();
+  // Pasted keys often carry a space or line break from the copy.
+  settings.apiKey = $<HTMLInputElement>("apiKey").value.replace(/\s+/g, "");
   settings.myName = $<HTMLInputElement>("myName").value.trim() || DEFAULTS.myName;
   settings.model = $<HTMLInputElement>("model").value.trim() || PROVIDERS[settings.provider].model;
-  // Pasted keys often carry a space or line break from the copy.
-  settings.apiKey = settings.apiKey.replace(/\s+/g, "");
   fixProviderForKey(settings);
   const lang = $<HTMLSelectElement>("lang").value;
   if (lang !== settings.lang) {
@@ -395,21 +597,29 @@ $("saveBtn").addEventListener("click", () => {
     stt.setLang(lang);
   }
   settings.boardText = $<HTMLTextAreaElement>("boardText").value;
+  settings.boardName = settings.boardText.trim()
+    ? $<HTMLInputElement>("boardName").value.trim() || defaultBoardName(settings.boardText)
+    : "";
+  if (settings.boardText.trim()) saveBoard(settings.boardName, settings.boardText);
   saveSettings(settings);
   loadBoard();
-  if (board && settings.apiKey) {
+  renderRate();
+  if (board && settings.apiKey && settings.provider === "anthropic") {
     setStatus("Warming cache…");
     warmCache(settings.provider, settings.apiKey, settings.model, systemPrompt)
       .then(() => setStatus(stt.isListening() ? "Listening" : "Ready"))
       .catch((err) => setStatus(`Cache warm failed: ${err?.message ?? err}`));
   }
-  showAnswer(board ? "Board loaded. Start listening." : "No board loaded.", true);
+  showAnswer(board ? `${settings.boardName} loaded. Start listening.` : "No board loaded.", true);
 });
 
 // Re-acquire the wake lock when the tab comes back to the front.
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && stt.isListening()) void keepScreenOn();
 });
+
+// The free-plan counter refills as calls age out of the last minute.
+window.setInterval(renderRate, 5_000);
 
 // ---------- init ----------
 
@@ -425,8 +635,10 @@ if (SIM) {
     settings.apiKey = key;
   }
   settings.boardText = await loadSimBoard();
+  settings.boardName = "Sample board";
 }
 loadBoard();
-if (board) showAnswer("Board loaded. Start listening.", true);
+renderRate();
+if (board) showAnswer(`${settings.boardName || "Board"} loaded. Start listening.`, true);
 setStatus(sttSupported() ? "Ready" : "No speech recognition in this browser");
 if (!sttSupported()) setMeta(environment());

@@ -116,3 +116,58 @@ dialog input, dialog select, dialog textarea {
 dialog textarea { resize: vertical; font-size: 14px; }
 dialog menu { display: flex; gap: 10px; justify-content: flex-end; padding: 0; margin: 8px 0 0; }
 .hint { font-size: 13px; color: var(--dim); margin-bottom: 8px; }
+
+/* ---------- v2: history, chips, tappable lines, flash ---------- */
+
+header .rate { font-variant-numeric: tabular-nums; color: var(--accent); min-width: 2.5em; text-align: right; }
+
+.answer.fresh { animation: fresh 1.2s ease-out; }
+@keyframes fresh {
+  0% { color: var(--accent); text-shadow: 0 0 18px rgba(90, 200, 250, 0.6); }
+  100% { color: var(--fg); text-shadow: none; }
+}
+
+.history {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 15px;
+  line-height: 1.35;
+  color: var(--dim);
+  border-left: 2px solid #2a2f37;
+  padding-left: 10px;
+}
+.history:empty { display: none; }
+
+.chips { flex-shrink: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.chips:empty { display: none; }
+.chip {
+  font-size: 14px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  text-align: left;
+  max-width: 100%;
+}
+.chip.q { border-color: var(--accent); }
+
+.lines .line {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-size: 14px;
+  color: var(--dim);
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  padding: 6px 8px;
+  margin: 0 -8px;
+}
+.lines .line:active { background: #1d2127; color: var(--fg); }
+
+.card-body { white-space: pre-wrap; font-size: 15px; line-height: 1.45; color: var(--fg); max-height: 60vh; overflow-y: auto; }
+dialog .row { display: flex; gap: 8px; align-items: center; }
+dialog .row select { flex: 1; min-width: 0; }
+dialog .row button { padding: 10px 12px; font-size: 15px; }
+dialog details { margin: 4px 0 12px; }
+dialog summary { color: var(--dim); font-size: 14px; padding: 8px 0; cursor: pointer; }
