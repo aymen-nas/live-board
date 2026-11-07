@@ -1,18 +1,48 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Utterance } from "./stt";
 
-export const MODELS = {
-  fastest: "claude-haiku-5-5",
-  balanced: "claude-sonnet-5-5",
-  best: "claude-opus-5-5",
-} as const;
+export type Provider = "anthropic" | "routeway" | "gemini" | "custom";
 
-export type ModelId = (typeof MODELS)[keyof typeof MODELS];
+export interface ProviderInfo {
+  label: string;
+  baseUrl: string; // OpenAI-style base, empty for Anthropic
+  model: string; // default model
+  note: string;
+}
+
+export const PROVIDERS: Record<Provider, ProviderInfo> = {
+  anthropic: {
+    label: "Anthropic (Claude)",
+    baseUrl: "",
+    model: "claude-haiku-5-5",
+    note: "Paid, about 2 cents per meeting. Inputs are not used for training.",
+  },
+  routeway: {
+    label: "Routeway (free models)",
+    baseUrl: "https://api.routeway.ai/v1",
+    model: "gemma-4-26b-a4b-it-luminous:free",
+    note: "Models ending in :free cost nothing; 20 requests a minute and 200 a day on the free plan. The DeepSeek and MiniMax free models often time out; the Gemma ones answer in under a second.",
+  },
+  gemini: {
+    label: "Google Gemini (free tier)",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    model: "gemini-3.5-flash-lite",
+    note: "Free, but on the free tier Google may use what you send to improve its products.",
+  },
+  custom: {
+    label: "Custom (OpenAI-compatible)",
+    baseUrl: "",
+    model: "",
+    note: "Any provider with an OpenAI-style /chat/completions endpoint. It must allow calls from a browser.",
+  },
+};
 
 export interface AnswerRequest {
+  provider: Provider;
+  baseUrl: string; // ignored for anthropic
   apiKey: string;
-  model: ModelId;
-  systemPrompt: string; // stable for the whole meeting -> cached
+  model: string;
+  systemPrompt: string; // stable for the whole meeting -> cached where the provider supports it
   transcript: Utterance[]; // recent window, oldest first
   forced: boolean; // true when the user tapped ANSWER
   signal: AbortSignal;
@@ -49,27 +79,31 @@ export function formatTranscript(transcript: Utterance[]): string {
     .join("\n");
 }
 
-export async function answer(req: AnswerRequest): Promise<AnswerResult> {
-  const client = getClient(req.apiKey);
-
-  const userText = req.forced
+function userText(req: AnswerRequest): string {
+  return req.forced
     ? `${formatTranscript(req.transcript)}\n\nANSWER: give me the exact words I say next.`
     : formatTranscript(req.transcript);
+}
 
+function finish(text: string, cacheRead = 0, cacheWrite = 0): AnswerResult {
+  const clean = text.trim();
+  return { text: clean, silent: SILENT_RE.test(clean), cacheRead, cacheWrite };
+}
+
+export async function answer(req: AnswerRequest): Promise<AnswerResult> {
+  return req.provider === "anthropic" ? answerAnthropic(req) : answerOpenAiCompatible(req);
+}
+
+async function answerAnthropic(req: AnswerRequest): Promise<AnswerResult> {
+  const client = getClient(req.apiKey);
   const stream = client.messages.stream(
     {
       model: req.model,
       max_tokens: 200,
       // Thinking stays on (adaptive); low effort keeps the first token fast.
       output_config: { effort: "low" },
-      system: [
-        {
-          type: "text",
-          text: req.systemPrompt,
-          cache_control: { type: "ephemeral" },
-        },
-      ],
-      messages: [{ role: "user", content: userText }],
+      system: [{ type: "text", text: req.systemPrompt, cache_control: { type: "ephemeral" } }],
+      messages: [{ role: "user", content: userText(req) }],
     },
     { signal: req.signal },
   );
@@ -90,18 +124,79 @@ export async function answer(req: AnswerRequest): Promise<AnswerResult> {
 
   const final = await stream.finalMessage();
   const usage = final.usage as { cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
-  const clean = text.trim();
-  return {
-    text: clean,
-    silent: SILENT_RE.test(clean),
-    cacheRead: usage.cache_read_input_tokens ?? 0,
-    cacheWrite: usage.cache_creation_input_tokens ?? 0,
-  };
+  return finish(text, usage.cache_read_input_tokens ?? 0, usage.cache_creation_input_tokens ?? 0);
 }
 
-// Pays the cache write once, right after the board is pasted, so the first
-// real question doesn't carry it.
-export async function warmCache(apiKey: string, model: ModelId, systemPrompt: string): Promise<void> {
+// Streams an OpenAI-style chat completion (Routeway, Gemini's compatibility
+// endpoint, DeepSeek, Groq, …). Server-sent events: "data: {...}" lines,
+// then "data: [DONE]".
+async function answerOpenAiCompatible(req: AnswerRequest): Promise<AnswerResult> {
+  const base = req.baseUrl.replace(/\/+$/, "");
+  const body: Record<string, unknown> = {
+    model: req.model,
+    stream: true,
+    max_tokens: 200,
+    messages: [
+      { role: "system", content: req.systemPrompt },
+      { role: "user", content: userText(req) },
+    ],
+  };
+  // Gemini maps this to its thinking level. Don't send it to Routeway: there it
+  // switches Gemma into a thinking mode that spends the whole budget on reasoning.
+  if (req.provider === "gemini") body.reasoning_effort = "low";
+
+  const res = await fetch(`${base}/chat/completions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${req.apiKey}` },
+    body: JSON.stringify(body),
+    signal: req.signal,
+  });
+  if (!res.ok || !res.body) {
+    const detail = (await res.text().catch(() => "")).slice(0, 200);
+    throw new Error(`${res.status} ${res.statusText}${detail ? `: ${detail}` : ""}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let text = "";
+  let first = true;
+
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) !== -1) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (!line.startsWith("data:")) continue;
+      const payload = line.slice(5).trim();
+      if (payload === "[DONE]") continue;
+      let parsed: any;
+      try {
+        parsed = JSON.parse(payload);
+      } catch {
+        continue; // partial or keep-alive line
+      }
+      if (parsed?.error) throw new Error(parsed.error.message ?? "provider error");
+      const delta: string = parsed?.choices?.[0]?.delta?.content ?? "";
+      if (!delta) continue;
+      if (first) {
+        first = false;
+        req.onFirstToken();
+      }
+      text += delta;
+      if (!SILENT_RE.test(text)) req.onDelta(text);
+    }
+  }
+  return finish(text);
+}
+
+// Pays Anthropic's cache write once, right after the board is pasted, so the
+// first real question doesn't carry it. Other providers cache on their own.
+export async function warmCache(provider: Provider, apiKey: string, model: string, systemPrompt: string): Promise<void> {
+  if (provider !== "anthropic") return;
   const client = getClient(apiKey);
   await client.messages.create({
     model,

@@ -1,23 +1,27 @@
 import "./style.css";
 import { buildSystemPrompt, parseBoard, type Board } from "./board";
-import { MODELS, answer, warmCache, type ModelId } from "./llm";
+import { PROVIDERS, answer, warmCache, type Provider } from "./llm";
 import { Stt, sttSupported, type Utterance } from "./stt";
 
 // ---------- persisted settings ----------
 
 interface Settings {
+  provider: Provider;
+  baseUrl: string;
   apiKey: string;
   myName: string;
-  model: ModelId;
+  model: string;
   lang: string;
   boardText: string;
   auto: boolean;
 }
 
 const DEFAULTS: Settings = {
+  provider: "anthropic",
+  baseUrl: "",
   apiKey: "",
   myName: "Aymen",
-  model: MODELS.fastest,
+  model: PROVIDERS.anthropic.model,
   lang: "en-US",
   boardText: "",
   auto: true,
@@ -52,6 +56,24 @@ let wakeLock: any = null;
 
 const WINDOW_MS = 90_000;
 const MAX_LINES = 14;
+const FREE_CALLS_PER_MINUTE = 5; // Routeway's free plan; Gemini's free tier is higher
+const callTimes: number[] = [];
+
+// Free providers are rate-limited, so only utterances that look aimed at me
+// get an automatic call; everything else waits for the Answer button.
+function looksAimedAtMe(text: string): boolean {
+  const name = settings.myName.toLowerCase();
+  const lower = text.toLowerCase();
+  return lower.includes(name) || /\byou\b|\byour\b/.test(lower) || /\?\s*$/.test(text);
+}
+
+function underRateLimit(): boolean {
+  const now = Date.now();
+  while (callTimes.length && callTimes[0]! < now - 60_000) callTimes.shift();
+  if (callTimes.length >= FREE_CALLS_PER_MINUTE) return false;
+  callTimes.push(now);
+  return true;
+}
 
 // ---------- DOM ----------
 
@@ -80,15 +102,16 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
   <dialog id="settings">
     <form method="dialog">
       <h2>Settings</h2>
-      <label>Anthropic API key <input id="apiKey" type="password" autocomplete="off" placeholder="sk-ant-…"></label>
-      <label>My name <input id="myName" type="text"></label>
-      <label>Model
-        <select id="model">
-          <option value="${MODELS.fastest}">Haiku 5.5 (fastest)</option>
-          <option value="${MODELS.balanced}">Sonnet 5.5</option>
-          <option value="${MODELS.best}">Opus 5.5</option>
+      <label>Provider
+        <select id="provider">
+          ${(Object.keys(PROVIDERS) as Provider[]).map((p) => `<option value="${p}">${PROVIDERS[p].label}</option>`).join("")}
         </select>
       </label>
+      <div id="providerNote" class="hint"></div>
+      <label>API key <input id="apiKey" type="password" autocomplete="off" placeholder="sk-…"></label>
+      <label>Model <input id="model" type="text" autocomplete="off" spellcheck="false"></label>
+      <label>Base URL <input id="baseUrl" type="url" autocomplete="off" spellcheck="false" placeholder="https://…/v1"></label>
+      <label>My name <input id="myName" type="text"></label>
       <label>Language
         <select id="lang">
           <option value="en-US">English</option>
@@ -205,6 +228,8 @@ async function ask(forced: boolean): Promise<void> {
 
   try {
     const result = await answer({
+      provider: settings.provider,
+      baseUrl: settings.baseUrl,
       apiKey: settings.apiKey,
       model: settings.model,
       systemPrompt,
@@ -220,8 +245,10 @@ async function ask(forced: boolean): Promise<void> {
     } else {
       showAnswer(result.text);
     }
-    const cache = result.cacheRead > 0 ? "cached" : result.cacheWrite > 0 ? "cache written" : "no cache";
-    setMeta(`${metaEl.textContent} · ${cache}`);
+    if (settings.provider === "anthropic") {
+      const cache = result.cacheRead > 0 ? "cached" : result.cacheWrite > 0 ? "cache written" : "no cache";
+      setMeta(`${metaEl.textContent} · ${cache}`);
+    }
   } catch (err: any) {
     if (controller.signal.aborted) return;
     showAnswer(`Error: ${err?.message ?? String(err)}`, true);
@@ -243,7 +270,13 @@ const stt = new Stt(
       interimEl.textContent = "";
       renderLines();
       // "okay", "yeah", "mhm": not worth a call.
-      if (settings.auto && u.text.split(/\s+/).length >= 3) void ask(false);
+      if (!settings.auto || u.text.split(/\s+/).length < 3) return;
+      if (settings.provider === "anthropic") {
+        void ask(false);
+      } else if (looksAimedAtMe(u.text)) {
+        if (underRateLimit()) void ask(false);
+        else setMeta("rate limit: use Answer");
+      }
     },
     onStatus: setStatus,
     onGaveUp: () => {
@@ -290,19 +323,37 @@ autoChk.addEventListener("change", () => {
   saveSettings(settings);
 });
 
+function applyProviderDefaults(provider: Provider): void {
+  const info = PROVIDERS[provider];
+  $<HTMLInputElement>("model").value = info.model;
+  $<HTMLInputElement>("baseUrl").value = info.baseUrl;
+  $<HTMLInputElement>("baseUrl").disabled = provider === "anthropic";
+  $("providerNote").textContent = info.note;
+}
+
+$<HTMLSelectElement>("provider").addEventListener("change", (e) => {
+  applyProviderDefaults((e.target as HTMLSelectElement).value as Provider);
+});
+
 $("settingsBtn").addEventListener("click", () => {
+  $<HTMLSelectElement>("provider").value = settings.provider;
   $<HTMLInputElement>("apiKey").value = settings.apiKey;
   $<HTMLInputElement>("myName").value = settings.myName;
-  $<HTMLSelectElement>("model").value = settings.model;
+  $<HTMLInputElement>("model").value = settings.model;
+  $<HTMLInputElement>("baseUrl").value = settings.baseUrl;
+  $<HTMLInputElement>("baseUrl").disabled = settings.provider === "anthropic";
+  $("providerNote").textContent = PROVIDERS[settings.provider].note;
   $<HTMLSelectElement>("lang").value = settings.lang;
   $<HTMLTextAreaElement>("boardText").value = settings.boardText;
   dialog.showModal();
 });
 
 $("saveBtn").addEventListener("click", () => {
+  settings.provider = $<HTMLSelectElement>("provider").value as Provider;
+  settings.baseUrl = $<HTMLInputElement>("baseUrl").value.trim();
   settings.apiKey = $<HTMLInputElement>("apiKey").value.trim();
   settings.myName = $<HTMLInputElement>("myName").value.trim() || DEFAULTS.myName;
-  settings.model = $<HTMLSelectElement>("model").value as ModelId;
+  settings.model = $<HTMLInputElement>("model").value.trim() || PROVIDERS[settings.provider].model;
   const lang = $<HTMLSelectElement>("lang").value;
   if (lang !== settings.lang) {
     settings.lang = lang;
@@ -313,7 +364,7 @@ $("saveBtn").addEventListener("click", () => {
   loadBoard();
   if (board && settings.apiKey) {
     setStatus("Warming cache…");
-    warmCache(settings.apiKey, settings.model, systemPrompt)
+    warmCache(settings.provider, settings.apiKey, settings.model, systemPrompt)
       .then(() => setStatus(stt.isListening() ? "Listening" : "Ready"))
       .catch((err) => setStatus(`Cache warm failed: ${err?.message ?? err}`));
   }
