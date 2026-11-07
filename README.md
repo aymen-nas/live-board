@@ -27,6 +27,20 @@ only in the phone's local storage.
 5. **Answer** forces an answer on the last thing said. **Question** cycles the
    question bank. Untick **auto** to answer only on tap.
 
+## Boards from Claude Code (no copy-paste)
+
+Claude Code writes every meeting board to a private repository,
+`aymen-nas/live-board-boards`, as `boards/YYYY-MM-DD Meeting name.txt`. The
+app lists them under ⚙︎ → **Boards from Claude**: pick one, tap **Use**.
+A copy is kept on the phone for offline use.
+
+One-time setup on the phone: create a fine-grained GitHub token at
+https://github.com/settings/personal-access-tokens/new with
+- Repository access: only `live-board-boards`
+- Permissions: Repository → Contents → Read-only
+
+then paste it under ⚙︎ → Provider, key and language → GitHub token, and tap ↻.
+
 ## Providers
 
 | Provider | Cost | Speed | Notes |

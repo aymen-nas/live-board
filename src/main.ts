@@ -6,6 +6,7 @@ import { SimStt, devKey, loadSimBoard, simEnabled, simLog } from "./sim";
 import { bestCard, bestQuestion, indexBoard, type IndexedBoard } from "./match";
 import { defaultBoardName, deleteBoard, listBoards, saveBoard } from "./library";
 import { exportSession, type SessionEntry } from "./session";
+import { fetchRemoteBoard, listRemoteBoards, type RemoteBoard } from "./github";
 
 // ---------- persisted settings ----------
 
@@ -19,6 +20,8 @@ interface Settings {
   boardText: string;
   boardName: string;
   auto: boolean;
+  ghRepo: string;
+  ghToken: string;
 }
 
 const DEFAULTS: Settings = {
@@ -31,6 +34,8 @@ const DEFAULTS: Settings = {
   boardText: "",
   boardName: "",
   auto: true,
+  ghRepo: "aymen-nas/live-board-boards",
+  ghToken: "",
 };
 
 function loadSettings(): Settings {
@@ -79,6 +84,7 @@ let inflight: AbortController | null = null;
 let questionIndex = 0;
 let wakeLock: any = null;
 let currentCard: Card | null = null;
+let remoteBoards: RemoteBoard[] = [];
 
 const WINDOW_MS = 90_000;
 const MAX_LINES = 14;
@@ -141,7 +147,15 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
   <dialog id="settings">
     <form method="dialog">
       <h2>Settings</h2>
-      <label>Saved boards
+      <label>Boards from Claude
+        <span class="row">
+          <select id="remote"></select>
+          <button id="remoteLoad" type="button" class="primary">Use</button>
+          <button id="remoteSync" type="button" class="ghost" aria-label="Refresh">↻</button>
+        </span>
+      </label>
+      <div id="remoteInfo" class="hint"></div>
+      <label>Saved on this phone
         <span class="row">
           <select id="library"></select>
           <button id="libLoad" type="button">Load</button>
@@ -169,6 +183,8 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
             <option value="de-DE">Deutsch</option>
           </select>
         </label>
+        <label>Boards repository <input id="ghRepo" type="text" autocomplete="off" spellcheck="false" placeholder="owner/name"></label>
+        <label>GitHub token (read-only) <input id="ghToken" type="password" autocomplete="off" placeholder="github_pat_…"></label>
         <button id="clearBtn" type="button" class="ghost">New meeting: clear transcript</button>
       </details>
       <menu>
@@ -332,6 +348,54 @@ function renderLibrary(): void {
     : `<option value="">No saved boards yet</option>`;
   select.disabled = boards.length === 0;
   if (settings.boardName) select.value = settings.boardName;
+}
+
+function renderRemote(): void {
+  const select = $<HTMLSelectElement>("remote");
+  select.innerHTML = remoteBoards.length
+    ? remoteBoards.map((b) => `<option value="${escapeHtml(b.path)}">${escapeHtml(b.name)}</option>`).join("")
+    : `<option value="">${settings.ghToken ? "No boards found" : "Add a GitHub token below"}</option>`;
+  select.disabled = remoteBoards.length === 0;
+  const current = remoteBoards.find((b) => b.name === settings.boardName);
+  if (current) select.value = current.path;
+}
+
+async function syncRemote(quiet = false): Promise<void> {
+  if (!settings.ghToken || !settings.ghRepo) {
+    remoteBoards = [];
+    renderRemote();
+    return;
+  }
+  if (!quiet) $("remoteInfo").textContent = "Syncing…";
+  try {
+    remoteBoards = await listRemoteBoards({ repo: settings.ghRepo, token: settings.ghToken });
+    $("remoteInfo").textContent = `${remoteBoards.length} boards in ${settings.ghRepo}`;
+  } catch (err: any) {
+    $("remoteInfo").textContent = String(err?.message ?? err);
+  }
+  renderRemote();
+}
+
+// Loads a board from the repo and makes it the active one, in one tap.
+async function useRemote(path: string): Promise<void> {
+  const meta = remoteBoards.find((b) => b.path === path);
+  if (!meta) return;
+  $("remoteInfo").textContent = "Loading…";
+  try {
+    const text = await fetchRemoteBoard({ repo: settings.ghRepo, token: settings.ghToken }, path);
+    settings.boardText = text;
+    settings.boardName = meta.name;
+    saveBoard(meta.name, text); // keep a copy for offline use
+    saveSettings(settings);
+    loadBoard();
+    $<HTMLTextAreaElement>("boardText").value = text;
+    $<HTMLInputElement>("boardName").value = meta.name;
+    $("remoteInfo").textContent = `Using ${meta.name}`;
+    showAnswer(`${meta.name} loaded. Start listening.`, true);
+    dialog.close();
+  } catch (err: any) {
+    $("remoteInfo").textContent = String(err?.message ?? err);
+  }
 }
 
 async function keepScreenOn(): Promise<void> {
@@ -541,6 +605,14 @@ $<HTMLSelectElement>("provider").addEventListener("change", (e) => {
   applyProviderDefaults((e.target as HTMLSelectElement).value as Provider);
 });
 
+$("remoteLoad").addEventListener("click", () => void useRemote($<HTMLSelectElement>("remote").value));
+$("remoteSync").addEventListener("click", () => {
+  settings.ghRepo = $<HTMLInputElement>("ghRepo").value.trim() || DEFAULTS.ghRepo;
+  settings.ghToken = $<HTMLInputElement>("ghToken").value.replace(/\s+/g, "");
+  saveSettings(settings);
+  void syncRemote();
+});
+
 $("libLoad").addEventListener("click", () => {
   const name = $<HTMLSelectElement>("library").value;
   const saved = listBoards().find((b) => b.name === name);
@@ -579,8 +651,12 @@ $("settingsBtn").addEventListener("click", () => {
   $<HTMLSelectElement>("lang").value = settings.lang;
   $<HTMLInputElement>("boardName").value = settings.boardName;
   $<HTMLTextAreaElement>("boardText").value = settings.boardText;
+  $<HTMLInputElement>("ghRepo").value = settings.ghRepo;
+  $<HTMLInputElement>("ghToken").value = settings.ghToken;
   renderLibrary();
+  renderRemote();
   dialog.showModal();
+  void syncRemote(true);
 });
 
 $("saveBtn").addEventListener("click", () => {
@@ -591,6 +667,8 @@ $("saveBtn").addEventListener("click", () => {
   settings.myName = $<HTMLInputElement>("myName").value.trim() || DEFAULTS.myName;
   settings.model = $<HTMLInputElement>("model").value.trim() || PROVIDERS[settings.provider].model;
   fixProviderForKey(settings);
+  settings.ghRepo = $<HTMLInputElement>("ghRepo").value.trim() || DEFAULTS.ghRepo;
+  settings.ghToken = $<HTMLInputElement>("ghToken").value.replace(/\s+/g, "");
   const lang = $<HTMLSelectElement>("lang").value;
   if (lang !== settings.lang) {
     settings.lang = lang;
@@ -639,6 +717,7 @@ if (SIM) {
 }
 loadBoard();
 renderRate();
+void syncRemote(true);
 if (board) showAnswer(`${settings.boardName || "Board"} loaded. Start listening.`, true);
 setStatus(sttSupported() ? "Ready" : "No speech recognition in this browser");
 if (!sttSupported()) setMeta(environment());
