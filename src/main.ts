@@ -145,6 +145,17 @@ function setStatus(text: string): void {
   statusEl.textContent = text;
 }
 
+// Shown next to mic errors so the environment is obvious at a glance:
+// "Safari 18 · home-screen app" vs "Chrome iOS · tab" explains most failures.
+function environment(): string {
+  const ua = navigator.userAgent;
+  const browser = /CriOS/.test(ua) ? "Chrome iOS" : /FxiOS/.test(ua) ? "Firefox iOS" : /EdgiOS/.test(ua) ? "Edge iOS" : /Safari/.test(ua) && /iPhone|iPad/.test(ua) ? "Safari iOS" : /Chrome\//.test(ua) ? "Chrome" : /Safari/.test(ua) ? "Safari" : "other browser";
+  const ios = ua.match(/OS (\d+)_(\d+)/);
+  const version = ios ? ` ${ios[1]}.${ios[2]}` : "";
+  const standalone = (navigator as any).standalone === true || matchMedia("(display-mode: standalone)").matches;
+  return `${browser}${version} · ${standalone ? "home-screen app" : "tab"} · ${sttSupported() ? "recognition available" : "no recognition"}`;
+}
+
 function setMeta(text: string): void {
   metaEl.textContent = text;
 }
@@ -278,7 +289,10 @@ const stt = new Stt(
         else setMeta("rate limit: use Answer");
       }
     },
-    onStatus: setStatus,
+    onStatus: (text) => {
+      setStatus(text);
+      if (text.startsWith("Mic error") || text.startsWith("Speech service")) setMeta(environment());
+    },
     onGaveUp: () => {
       releaseScreen();
       listenBtn.textContent = "Start";
@@ -382,3 +396,4 @@ autoChk.checked = settings.auto;
 loadBoard();
 if (board) showAnswer("Board loaded. Start listening.", true);
 setStatus(sttSupported() ? "Ready" : "No speech recognition in this browser");
+if (!sttSupported()) setMeta(environment());
