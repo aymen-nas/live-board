@@ -12,6 +12,7 @@ export interface SttCallbacks {
   onInterim: (text: string) => void;
   onFinal: (utterance: Utterance) => void;
   onStatus: (status: string) => void;
+  onGaveUp: () => void; // mic permission denied or recognition unavailable
 }
 
 // Minimal typing; lib.dom doesn't ship these on every TS version.
@@ -50,6 +51,7 @@ export class Stt {
     const Ctor = recognitionCtor();
     if (!Ctor) {
       this.cb.onStatus("Speech recognition not available in this browser");
+      this.cb.onGaveUp();
       return;
     }
     this.listening = true;
@@ -106,6 +108,7 @@ export class Stt {
       }
       if (event.error === "not-allowed" || event.error === "service-not-allowed") {
         this.listening = false;
+        this.cb.onGaveUp();
       }
     };
 

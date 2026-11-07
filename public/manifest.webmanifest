@@ -1,9 +1,0 @@
-{
-  "name": "Live Board",
-  "short_name": "Live Board",
-  "display": "standalone",
-  "background_color": "#0b0d10",
-  "theme_color": "#0b0d10",
-  "start_url": ".",
-  "icons": []
-}

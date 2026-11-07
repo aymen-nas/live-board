@@ -245,6 +245,11 @@ const stt = new Stt(
       if (settings.auto) void ask(false);
     },
     onStatus: setStatus,
+    onGaveUp: () => {
+      releaseScreen();
+      listenBtn.textContent = "Start";
+      listenBtn.classList.remove("live");
+    },
   },
   settings.lang,
 );
