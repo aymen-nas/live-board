@@ -16,7 +16,7 @@ only in the phone's local storage.
 
 ## On the iPhone
 
-1. Open https://aymen-nas.github.io/live-board/ in Safari.
+1. Open https://aymen-nas.github.io/live-board/ in Safari or Brave.
 2. Share → **Add to Home Screen**. It opens full screen with its own icon.
 3. ⚙︎ Settings: provider and API key, your name, model, language, and the
    board text. Save. It parses the board and, on Anthropic, pre-warms the
@@ -79,8 +79,10 @@ Pushes to `main` build, test and deploy to GitHub Pages.
 
 ## Known limits
 
-- Speech recognition needs Safari (or Chrome on desktop); it can't be tested in
-  the Claude desktop browser pane, which blocks microphones.
+- Speech recognition works in any browser on the iPhone (they all run on
+  Apple's engine; tested in Brave). On a desktop it needs Google Chrome or
+  Safari: Brave desktop and Firefox fail with "network". It can't be tested in
+  the Claude desktop browser pane, which blocks microphones; use `?sim`.
 - Safari stops a recognition session now and then; the app restarts it within
   about 150 ms, so a word can be lost at the seam.
 - The app must stay in the foreground with the screen on; iOS pauses the mic
