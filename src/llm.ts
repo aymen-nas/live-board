@@ -1,4 +1,6 @@
-import Anthropic from "@anthropic-ai/sdk";
+// Type only: the SDK itself (~300 KB) loads on demand, so the free-provider
+// path never downloads it.
+import type Anthropic from "@anthropic-ai/sdk";
 import type { Utterance } from "./stt";
 
 export type Provider = "anthropic" | "routeway" | "gemini" | "custom";
@@ -21,7 +23,7 @@ export const PROVIDERS: Record<Provider, ProviderInfo> = {
     label: "Routeway (free models)",
     baseUrl: "https://api.routeway.ai/v1",
     model: "gemma-4-26b-a4b-it-luminous:free",
-    note: "Models ending in :free cost nothing; 20 requests a minute and 200 a day on the free plan. The DeepSeek and MiniMax free models often time out; the Gemma ones answer in under a second.",
+    note: "Models ending in :free cost nothing; 5 calls a minute and 200 a day on the free plan. Shared queue: the first word takes 1 to 5 seconds. The DeepSeek and MiniMax free models often time out.",
   },
   gemini: {
     label: "Google Gemini (free tier)",
@@ -63,10 +65,19 @@ const SILENT_RE = /^[\s\-–—.·]*$/;
 let client: Anthropic | null = null;
 let clientKey = "";
 
-function getClient(apiKey: string): Anthropic {
+let sdk: Promise<typeof import("@anthropic-ai/sdk")> | null = null;
+
+// Starts downloading the SDK ahead of the first call (no-op for other providers).
+export function preloadProvider(provider: Provider): void {
+  if (provider === "anthropic") sdk ??= import("@anthropic-ai/sdk");
+}
+
+async function getClient(apiKey: string): Promise<Anthropic> {
   if (!client || clientKey !== apiKey) {
+    sdk ??= import("@anthropic-ai/sdk");
+    const { default: AnthropicClient } = await sdk;
     // The key lives only on this phone; calls go straight to the API.
-    client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
+    client = new AnthropicClient({ apiKey, dangerouslyAllowBrowser: true });
     clientKey = apiKey;
   }
   return client;
@@ -95,7 +106,7 @@ export async function answer(req: AnswerRequest): Promise<AnswerResult> {
 }
 
 async function answerAnthropic(req: AnswerRequest): Promise<AnswerResult> {
-  const client = getClient(req.apiKey);
+  const client = await getClient(req.apiKey);
   const stream = client.messages.stream(
     {
       model: req.model,
@@ -197,7 +208,7 @@ async function answerOpenAiCompatible(req: AnswerRequest): Promise<AnswerResult>
 // first real question doesn't carry it. Other providers cache on their own.
 export async function warmCache(provider: Provider, apiKey: string, model: string, systemPrompt: string): Promise<void> {
   if (provider !== "anthropic") return;
-  const client = getClient(apiKey);
+  const client = await getClient(apiKey);
   await client.messages.create({
     model,
     max_tokens: 1,

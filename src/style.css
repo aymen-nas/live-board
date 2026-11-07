@@ -171,3 +171,13 @@ dialog .row select { flex: 1; min-width: 0; }
 dialog .row button { padding: 10px 12px; font-size: 15px; }
 dialog details { margin: 4px 0 12px; }
 dialog summary { color: var(--dim); font-size: 14px; padding: 8px 0; cursor: pointer; }
+
+.update {
+  background: #1f6f43;
+  color: #fff;
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 13px;
+  min-height: 32px;
+}

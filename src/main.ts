@@ -1,12 +1,13 @@
 import "./style.css";
 import { buildSystemPrompt, parseBoard, type Board, type Card } from "./board";
-import { PROVIDERS, answer, warmCache, type Provider } from "./llm";
+import { PROVIDERS, answer, preloadProvider, warmCache, type Provider } from "./llm";
 import { Stt, sttSupported, type SttCallbacks, type Utterance } from "./stt";
 import { SimStt, devKey, loadSimBoard, simEnabled, simLog } from "./sim";
 import { bestCard, bestQuestion, indexBoard, sameSentence, type IndexedBoard } from "./match";
 import { defaultBoardName, deleteBoard, listBoards, saveBoard } from "./library";
 import { exportSession, type SessionEntry } from "./session";
 import { fetchRemoteBoard, listRemoteBoards, type RemoteBoard } from "./github";
+import { setupUpdates } from "./update";
 
 // ---------- persisted settings ----------
 
@@ -117,6 +118,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
     <span id="status">Idle</span>
     <span id="meta"></span>
     <span id="rate" class="rate" title="Calls left this minute"></span>
+    <button id="updateBtn" class="update" hidden>Update ready · tap</button>
     <button id="settingsBtn" class="ghost" aria-label="Settings">⚙︎</button>
   </header>
 
@@ -607,6 +609,7 @@ function apiOrigin(): string | null {
 }
 
 function preconnect(): void {
+  preloadProvider(settings.provider);
   const origin = apiOrigin();
   if (!origin || document.head.querySelector(`link[rel="preconnect"][href="${origin}"]`)) return;
   const link = document.createElement("link");
@@ -823,6 +826,11 @@ loadBoard();
 preconnect();
 renderRate();
 void syncRemote(true);
+setupUpdates((reload) => {
+  const btn = $<HTMLButtonElement>("updateBtn");
+  btn.hidden = false;
+  btn.onclick = reload;
+});
 if (board) showAnswer(`${settings.boardName || "Board"} loaded. Start listening.`, true);
 setStatus(sttSupported() ? "Ready" : "No speech recognition in this browser");
 if (!sttSupported()) setMeta(environment());

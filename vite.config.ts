@@ -10,7 +10,8 @@ export default defineConfig({
   plugins: [
     ...(process.env.HTTPS ? [basicSsl()] : []),
     VitePWA({
-      registerType: "autoUpdate",
+      // "prompt": a new version waits until the user taps "Update ready" (src/update.ts).
+      registerType: "prompt",
       includeAssets: ["icon.svg"],
       manifest: {
         name: "Live Board",
