@@ -27,7 +27,6 @@ export interface AnswerResult {
   cacheWrite: number;
 }
 
-const SILENT = "—";
 // The model sometimes decorates the marker ("—.", "- "); treat those as silence too.
 const SILENT_RE = /^[\s\-–—.·]*$/;
 
