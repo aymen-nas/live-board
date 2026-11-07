@@ -1,7 +1,8 @@
 import "./style.css";
 import { buildSystemPrompt, parseBoard, type Board } from "./board";
 import { PROVIDERS, answer, warmCache, type Provider } from "./llm";
-import { Stt, sttSupported, type Utterance } from "./stt";
+import { Stt, sttSupported, type SttCallbacks, type Utterance } from "./stt";
+import { SimStt, devKey, loadSimBoard, simEnabled, simLog } from "./sim";
 
 // ---------- persisted settings ----------
 
@@ -256,6 +257,7 @@ async function ask(forced: boolean): Promise<void> {
     } else {
       showAnswer(result.text);
     }
+    if (SIM) simLog.push({ at: Date.now(), kind: result.silent ? "silent" : "answer", text: result.text, ms: Date.now() - askedAt });
     if (settings.provider === "anthropic") {
       const cache = result.cacheRead > 0 ? "cached" : result.cacheWrite > 0 ? "cache written" : "no cache";
       setMeta(`${metaEl.textContent} · ${cache}`);
@@ -263,6 +265,7 @@ async function ask(forced: boolean): Promise<void> {
   } catch (err: any) {
     if (controller.signal.aborted) return;
     showAnswer(`Error: ${err?.message ?? String(err)}`, true);
+    if (SIM) simLog.push({ at: Date.now(), kind: "error", text: String(err?.message ?? err) });
   } finally {
     if (inflight === controller) inflight = null;
     answerEl.classList.remove("thinking");
@@ -271,8 +274,9 @@ async function ask(forced: boolean): Promise<void> {
 
 // ---------- speech ----------
 
-const stt = new Stt(
-  {
+const SIM = simEnabled();
+
+const sttCallbacks: SttCallbacks = {
     onInterim: (text) => {
       interimEl.textContent = text;
     },
@@ -298,9 +302,9 @@ const stt = new Stt(
       listenBtn.textContent = "Start";
       listenBtn.classList.remove("live");
     },
-  },
-  settings.lang,
-);
+};
+
+const stt: Stt | SimStt = SIM ? new SimStt(sttCallbacks) : new Stt(sttCallbacks, settings.lang);
 
 function toggleListening(): void {
   if (stt.isListening()) {
@@ -309,7 +313,7 @@ function toggleListening(): void {
     listenBtn.textContent = "Start";
     listenBtn.classList.remove("live");
   } else {
-    if (!sttSupported()) {
+    if (!SIM && !sttSupported()) {
       showAnswer("This browser has no speech recognition. On iPhone, open this page in Safari.", true);
       return;
     }
@@ -393,6 +397,18 @@ document.addEventListener("visibilitychange", () => {
 // ---------- init ----------
 
 autoChk.checked = settings.auto;
+if (SIM) {
+  // Simulation: sample board, and in dev the key from .env.local, without
+  // touching the saved settings.
+  const key = devKey();
+  if (key && !settings.apiKey) {
+    settings.provider = "routeway";
+    settings.baseUrl = PROVIDERS.routeway.baseUrl;
+    settings.model = PROVIDERS.routeway.model;
+    settings.apiKey = key;
+  }
+  settings.boardText = await loadSimBoard();
+}
 loadBoard();
 if (board) showAnswer("Board loaded. Start listening.", true);
 setStatus(sttSupported() ? "Ready" : "No speech recognition in this browser");

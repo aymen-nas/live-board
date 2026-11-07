@@ -67,6 +67,14 @@ rest should stay silent. The harness prints per line the answer, the time to
 first token and the cache read/write tokens, and exits non-zero if the model
 misbehaves or the cache isn't hit from the second call on.
 
+Simulation mode: open the app with `?sim` (for example
+http://localhost:5174/?sim) and press Start. A fake microphone "speaks"
+`public/sim/transcript.txt` word by word into the real app with the sample
+board; in dev the key comes from `VITE_ROUTEWAY_API_KEY` in `.env.local` and
+never reaches the production build. Results are in `window.__simLog`.
+Last run: all 3 lines aimed at Aymen answered (first word after 1.0–4.7 s),
+silent on the other 9, no console errors.
+
 Pushes to `main` build, test and deploy to GitHub Pages.
 
 ## Known limits

@@ -1,0 +1,17 @@
+OPENER — WORD FOR WORD
+Quick update from my side: the rain alerts now go out within 2 minutes of the forecast change instead of every hour. The test run on the staging city is on since yesterday; production follows once the numbers look fine. Two questions for you: do you still want the alerts in the chat channel, and which alerts are worth a ping, every change or only storms?
+══════════
+CLUELY PRIMER
+Always answer in English. You help me, Aymen, live in the weekly meeting with the operations team about the rain alert service. Answer ONLY the latest question or point aimed at me, as the exact words I say next, 1 to 3 short spoken sentences, no recap, no lead-in. Facts only from the cards; never invent numbers, owners, dates or ticket IDs. If the cards don't cover it, say "I'd check and come back to you". Don't name colleagues and never talk about anyone in the room in the third person; say "we". Never promise dates: the answer is "after the test day". Numbers as digits.
+══════════
+WHAT CHANGES FOR OPERATIONS
+Today the rain alert mail comes every hour with up to 10 forecast changes for the cities on the list. The change: we check the forecast every 2 minutes, so a storm warning reaches operations within minutes instead of up to an hour later. Delivery: a chat ping per alert in a dedicated channel; the mail keeps coming for now. Later the dashboard becomes the place with the history and filters. What stays the same: which cities count, the severity score and the threshold.
+══════════
+THE TEST RUN
+The staging city runs every 2 minutes since yesterday evening, weekdays 06:00 to 22:00. First runs looked healthy: about 1 second per run, no errors. Cost baseline: about 25 euros a month today; estimate for the new rhythm 4 to 5 times that, confirmed after the test day. Production follows once the numbers look fine; I'll share it in the thread when it's live.
+══════════
+IF ASKED WHEN
+The one answer for every date question: after the test day. I'd rather say when it's live than guess a day.
+══════════
+QUESTION BANK
+Questions to pick from, word for word. Do you still want the alerts in the chat channel? Which alerts are worth a ping: every forecast change or only storms? Should alerts run until 22:00 or only office hours? Is there a maximum number of pings per hour you'd accept?
