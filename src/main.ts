@@ -18,11 +18,11 @@ interface Settings {
 }
 
 const DEFAULTS: Settings = {
-  provider: "anthropic",
-  baseUrl: "",
+  provider: "routeway",
+  baseUrl: PROVIDERS.routeway.baseUrl,
   apiKey: "",
   myName: "Aymen",
-  model: PROVIDERS.anthropic.model,
+  model: PROVIDERS.routeway.model,
   lang: "en-US",
   boardText: "",
   auto: true,
@@ -37,6 +37,19 @@ function loadSettings(): Settings {
   }
 }
 
+// An Anthropic key always starts with "sk-ant-". Anything else sent to
+// Anthropic fails as "invalid key", so move it to Routeway instead of
+// making the user find the dropdown.
+function fixProviderForKey(s: Settings): void {
+  if (s.provider === "anthropic" && s.apiKey && !s.apiKey.startsWith("sk-ant-")) {
+    s.provider = "routeway";
+    s.baseUrl = PROVIDERS.routeway.baseUrl;
+    s.model = PROVIDERS.routeway.model;
+  }
+  if (s.provider !== "anthropic" && !s.baseUrl) s.baseUrl = PROVIDERS[s.provider].baseUrl;
+  if (!s.model) s.model = PROVIDERS[s.provider].model;
+}
+
 function saveSettings(s: Settings): void {
   try {
     localStorage.setItem("live-board.settings", JSON.stringify(s));
@@ -48,6 +61,7 @@ function saveSettings(s: Settings): void {
 // ---------- state ----------
 
 const settings = loadSettings();
+fixProviderForKey(settings);
 let board: Board | null = null;
 let systemPrompt = "";
 const transcript: Utterance[] = [];
@@ -372,6 +386,9 @@ $("saveBtn").addEventListener("click", () => {
   settings.apiKey = $<HTMLInputElement>("apiKey").value.trim();
   settings.myName = $<HTMLInputElement>("myName").value.trim() || DEFAULTS.myName;
   settings.model = $<HTMLInputElement>("model").value.trim() || PROVIDERS[settings.provider].model;
+  // Pasted keys often carry a space or line break from the copy.
+  settings.apiKey = settings.apiKey.replace(/\s+/g, "");
+  fixProviderForKey(settings);
   const lang = $<HTMLSelectElement>("lang").value;
   if (lang !== settings.lang) {
     settings.lang = lang;
