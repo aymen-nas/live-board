@@ -28,6 +28,8 @@ export interface AnswerResult {
 }
 
 const SILENT = "—";
+// The model sometimes decorates the marker ("—.", "- "); treat those as silence too.
+const SILENT_RE = /^[\s\-–—.·]*$/;
 
 let client: Anthropic | null = null;
 let clientKey = "";
@@ -83,7 +85,7 @@ export async function answer(req: AnswerRequest): Promise<AnswerResult> {
       }
       text += event.delta.text;
       // Don't flash the silence marker on screen while it streams.
-      if (text.trim() !== SILENT) req.onDelta(text);
+      if (!SILENT_RE.test(text)) req.onDelta(text);
     }
   }
 
@@ -92,7 +94,7 @@ export async function answer(req: AnswerRequest): Promise<AnswerResult> {
   const clean = text.trim();
   return {
     text: clean,
-    silent: clean === SILENT || clean === "",
+    silent: SILENT_RE.test(clean),
     cacheRead: usage.cache_read_input_tokens ?? 0,
     cacheWrite: usage.cache_creation_input_tokens ?? 0,
   };

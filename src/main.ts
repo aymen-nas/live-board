@@ -242,7 +242,8 @@ const stt = new Stt(
       transcript.push(u);
       interimEl.textContent = "";
       renderLines();
-      if (settings.auto) void ask(false);
+      // "okay", "yeah", "mhm": not worth a call.
+      if (settings.auto && u.text.split(/\s+/).length >= 3) void ask(false);
     },
     onStatus: setStatus,
     onGaveUp: () => {
