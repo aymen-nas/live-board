@@ -52,7 +52,13 @@ export class EarlyFire {
     return true;
   }
 
-  // New meeting or stop: forget the pending line (its index may no longer exist).
+  // Stop: no new early fire, but keep the pending line so the stopped
+  // recognizer's last final can still settle it.
+  pause(): void {
+    this.cancelTimer();
+  }
+
+  // New meeting or a new Start: forget the pending line (its index may no longer exist).
   reset(): void {
     this.cancelTimer();
     this.pending = null;

@@ -96,10 +96,11 @@ export class Stt {
     // its last events; only the current one may touch state. After a plain
     // Stop, the stopped one may still hand over its last sentence.
     const current = () => this.rec === rec || (this.rec === null && this.closing === rec);
+    const active = () => this.rec === rec; // status, errors and live text: the running one only
     let failed = false;
 
     rec.onstart = () => {
-      if (current()) this.cb.onStatus("Listening");
+      if (active()) this.cb.onStatus("Listening");
     };
 
     rec.onresult = (event: any) => {
@@ -115,11 +116,11 @@ export class Stt {
           interim += text;
         }
       }
-      this.cb.onInterim(interim.trim());
+      if (active()) this.cb.onInterim(interim.trim());
     };
 
     rec.onerror = (event: any) => {
-      if (!current()) return;
+      if (!active()) return;
       // "no-speech" and "aborted" are routine on iOS; anything else is worth showing.
       if (event.error !== "no-speech" && event.error !== "aborted") {
         failed = true;

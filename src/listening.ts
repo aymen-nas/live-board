@@ -7,10 +7,10 @@ import { looksAimedAt, wordCount } from "./conversation";
 import { EarlyFire } from "./early";
 import { keepScreenOn, releaseScreen } from "./screen";
 import { SimStt, simLog } from "./sim";
-import { SIM, everyLine, rememberMeeting, settings, state, underFreeLimit } from "./state";
+import { SIM, everyLine, forgetMeeting, rememberMeeting, settings, state, underFreeLimit } from "./state";
 import { Stt, sttSupported, type SttCallbacks } from "./stt";
 import { els, environment, setMeta, setStatus, showAnswer } from "./ui";
-import { renderLines, updateContext } from "./view";
+import { renderChips, renderHistory, renderLines, showNotice, updateContext } from "./view";
 
 const MIN_WORDS = 3; // "okay", "yeah", "mhm": not worth a call
 const LIVE_CHARS = 80; // about 2 lines of the live line at 375 px
@@ -74,8 +74,9 @@ const callbacks: SttCallbacks = {
     if (text.startsWith("Mic error") || text.startsWith("Speech service") || text.startsWith("Could not start")) {
       setMeta(environment());
     }
-    // The header is one line; long instructions go where they can be read.
-    if (text.startsWith("Speech service") || text.startsWith("Could not start")) showAnswer(text, true);
+    // The header is one line; when the mic gives up for good, its long
+    // instructions go where they can be read. (Retries stay in the header.)
+    if (text.startsWith("Speech service")) showNotice(text);
   },
   onGaveUp: () => stopped(),
 };
@@ -86,7 +87,7 @@ export const stt: Stt | SimStt = SIM ? new SimStt(callbacks) : new Stt(callbacks
 export const LISTENING_CHANGED = "live-board:listening";
 
 function stopped(): void {
-  early.reset();
+  early.pause();
   els.interim.textContent = "";
   keepWarm(false);
   releaseScreen();
@@ -102,12 +103,13 @@ export function toggleListening(): void {
     return;
   }
   if (!SIM && !sttSupported()) {
-    showAnswer("This browser has no speech recognition. On iPhone, any browser works; on a computer, use Chrome or Safari.", true);
+    showNotice("This browser has no speech recognition. On iPhone, any browser works; on a computer, use Chrome or Safari.");
     return;
   }
+  early.reset();
   if (!settings.apiKey || !state.board) {
     // Still listen (the transcript is useful on its own), but say what's missing now, not mid-meeting.
-    showAnswer(!settings.apiKey ? "Listening, but no API key yet: add one in settings (⚙︎) to get answers." : "Listening, but no board loaded: pick one in settings (⚙︎).", true);
+    showNotice(!settings.apiKey ? "Listening, but no API key yet: add one in settings (⚙︎) to get answers." : "Listening, but no board loaded: pick one in settings (⚙︎).", true);
   }
   stt.start();
   keepWarm(true);
@@ -117,8 +119,23 @@ export function toggleListening(): void {
   window.dispatchEvent(new Event(LISTENING_CHANGED));
 }
 
-// "New meeting": forget the pending early line and any call in flight.
-export function resetListening(): void {
+// New meeting: forget the transcript, the answers, the pending early line,
+// any call in flight and the saved meeting.
+export function newMeeting(message: string): void {
   early.reset();
   cancelAll();
+  forgetMeeting();
+  state.transcript.length = 0;
+  state.session.length = 0;
+  state.answers.length = 0;
+  state.shownSeq = 0;
+  state.shownQuestions.clear();
+  state.questionIndex = 0;
+  state.lastAnswerAt = 0;
+  state.currentCard = null;
+  setMeta("");
+  renderLines();
+  renderHistory();
+  renderChips(null);
+  showAnswer(message, true);
 }

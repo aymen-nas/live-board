@@ -80,4 +80,16 @@ describe("EarlyFire", () => {
     early.reset();
     expect(early.final("Aymen what does it cost per month?", Date.now())).toBe(false);
   });
+
+  it("after pause (Stop), the stopped engine's last final still settles the fired line", () => {
+    const { early, settled, fired } = setup();
+    early.interim("Aymen what is the budget for next quarter");
+    vi.advanceTimersByTime(EARLY_MS);
+    early.pause();
+    early.interim("Aymen what is the budget for next quarter please");
+    vi.advanceTimersByTime(EARLY_MS * 3);
+    expect(fired).toHaveLength(1);
+    expect(early.final("Aymen, what is the budget for next quarter?", Date.now())).toBe(true);
+    expect(settled).toHaveLength(1);
+  });
 });

@@ -183,6 +183,8 @@ async function answerAnthropic(req: AnswerRequest): Promise<AnswerResult> {
 // then "data: [DONE]".
 async function answerOpenAiCompatible(req: AnswerRequest): Promise<AnswerResult> {
   const base = req.baseUrl.replace(/\/+$/, "");
+  // Never send a key to a relative URL (this site) or over plain http.
+  if (!/^https:\/\//.test(base)) throw new Error("This provider needs an https Base URL (⚙︎ → Provider, key and language).");
   const body: Record<string, unknown> = {
     model: req.model,
     stream: true,

@@ -13,7 +13,7 @@ import { ProviderError, answer } from "./llm";
 import { simLog } from "./sim";
 import { SIM, limiter, rememberMeeting, settings, state, type Answer } from "./state";
 import { announce, els, flash, setMeta, showAnswer, showError } from "./ui";
-import { renderChips, renderHistory, renderRate } from "./view";
+import { renderChips, renderHistory, renderRate, showNotice } from "./view";
 
 interface Call {
   seq: number;
@@ -53,7 +53,7 @@ function restoreIfPartial(): void {
   if (!partialOnScreen || live.has(state.shownSeq)) return;
   partialOnScreen = false;
   const last = state.answers[state.answers.length - 1];
-  if (last) state.shownSeq = last.seq;
+  state.shownSeq = last?.seq ?? 0;
   showAnswer(last?.text ?? "", true);
   renderHistory();
 }
@@ -81,19 +81,21 @@ function describe(err: unknown): { text: string; offline: boolean } {
 
 export async function ask(forced: boolean, upto = state.transcript.length - 1): Promise<void> {
   if (!settings.apiKey) {
-    showAnswer("Add your API key in settings (⚙︎).", true);
+    showNotice("Add your API key in settings (⚙︎).");
     return;
   }
   if (!state.systemPrompt) {
-    showAnswer("Pick a board in settings (⚙︎) first.", true);
+    showNotice("Pick a board in settings (⚙︎) first.");
     return;
   }
   const window_ = windowEndingAt(state.transcript, upto);
   if (window_.length === 0) {
-    showAnswer("Nothing heard yet.", true);
+    showNotice("Nothing heard yet.");
     return;
   }
 
+  // An auto re-ask of a line I already tapped adds nothing: the tap answers it.
+  if (!forced && [...live.values()].some((c) => c.forced && c.upto === upto)) return;
   for (const c of [...live.values()]) {
     if (forced || (c.upto === upto && !c.forced)) abort(c);
   }
@@ -172,8 +174,13 @@ export async function ask(forced: boolean, upto = state.transcript.length - 1): 
       limiter()?.unrecord(calledAt); // it never reached the provider
       renderRate();
     }
+    if (!forced && drawing) {
+      // It failed mid-stream: its fragment isn't an answer, put the last one back.
+      live.delete(call.seq);
+      partialOnScreen = true;
+    }
     restoreIfPartial();
-    if (forced) {
+    if (forced && mayDraw()) {
       draw();
       showError(text);
     } else {

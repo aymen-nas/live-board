@@ -74,6 +74,19 @@ describe("Stt", () => {
     expect(FakeRec.all).toHaveLength(1); // no restart after Stop
   });
 
+  it("after Stop, the stopped engine can't flip the status back or refill the live line", () => {
+    const statuses: string[] = [];
+    const interims: string[] = [];
+    const stt = new Stt({ onInterim: (t) => void interims.push(t), onFinal: () => {}, onStatus: (s) => void statuses.push(s), onGaveUp: () => {} });
+    stt.start();
+    const rec = FakeRec.all[0]!;
+    stt.stop();
+    rec.onstart?.();
+    rec.onresult?.({ resultIndex: 0, results: [Object.assign([{ transcript: "late words" }], { isFinal: false })] });
+    expect(statuses.at(-1)).toBe("Stopped");
+    expect(interims).toEqual([]);
+  });
+
   it("restarts after a normal end", () => {
     const { cb } = cbs();
     const stt = new Stt(cb);

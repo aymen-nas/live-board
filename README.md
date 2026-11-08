@@ -35,7 +35,9 @@ the server: keys, boards and the meeting live only in the phone's storage.
 listening, an **Update ready · tap** pill appears; tapping it reloads into the
 new version. The meeting (transcript and answers) survives the reload: it is
 restored if the app opens again within 30 minutes of the last line, and
-deleted after that. ⚙︎ → **New meeting** clears it at once. After the
+cleared after that, also when iOS resumes the app instead of restarting it.
+So tap ⧉ right after a meeting if you want its transcript. ⚙︎ → **New
+meeting** clears it at once. After the
 8 Nov 2026 update that added the pill, close the app once from the app
 switcher; older versions can't show it.
 

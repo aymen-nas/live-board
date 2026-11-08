@@ -14,7 +14,7 @@ import "./style.css";
 import { els, setMeta, setStatus, showAnswer, showCard, environment } from "./ui";
 import { ask } from "./answering";
 import { preconnect } from "./connection";
-import { LISTENING_CHANGED, stt, toggleListening } from "./listening";
+import { LISTENING_CHANGED, newMeeting, stt, toggleListening } from "./listening";
 import { loadMeeting } from "./meeting";
 import { initSettings, syncRemote } from "./settingsDialog";
 import { exportSession } from "./session";
@@ -23,7 +23,7 @@ import { PROVIDERS } from "./llm";
 import { SIM, flushMeeting, persistSettings, settings, state } from "./state";
 import { sttSupported } from "./stt";
 import { setupUpdates } from "./update";
-import { initChips, loadBoard, renderHistory, renderLines, renderRate, showQuestion } from "./view";
+import { initChips, loadBoard, renderHistory, renderLines, renderRate, showNotice, showQuestion } from "./view";
 
 els.listen.addEventListener("click", toggleListening);
 els.answerBtn.addEventListener("click", () => void ask(true));
@@ -60,7 +60,7 @@ els.lines.addEventListener("click", (e) => {
 els.nudge.addEventListener("click", () => {
   const questions = state.board?.questions ?? [];
   if (questions.length === 0) {
-    showAnswer("No question bank in this board.", true);
+    showNotice("No question bank in this board.");
     return;
   }
   showQuestion(questions[state.questionIndex % questions.length]!);
@@ -88,15 +88,28 @@ els.auto.addEventListener("change", () => {
 
 // Offline: say so right away instead of letting calls fail one by one. Back
 // online, clear only our own "Offline" (not a mic error or a missing engine).
-window.addEventListener("offline", () => setStatus("Offline"));
+const TRANSIENT = /^(Ready|Listening|Stopped|Idle|Simulation finished)/;
+window.addEventListener("offline", () => {
+  if (TRANSIENT.test(els.status.textContent ?? "") || !els.status.textContent) setStatus("Offline");
+});
 window.addEventListener("online", () => {
   if (els.status.textContent === "Offline") setStatus(stt.isListening() ? "Listening" : "Ready");
 });
 
 // Hidden, reloaded or evicted: save the meeting now, not in a second.
 window.addEventListener("pagehide", flushMeeting);
+// iOS often resumes the app hours later instead of restarting it: a meeting
+// whose last line is over 30 minutes old is over, so start fresh.
+const STALE_MS = 30 * 60_000;
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "hidden") flushMeeting();
+  if (document.visibilityState === "hidden") {
+    flushMeeting();
+    return;
+  }
+  const last = state.transcript[state.transcript.length - 1];
+  if (!stt.isListening() && last && Date.now() - last.at > STALE_MS) {
+    newMeeting("New meeting. The last one ended over 30 minutes ago and was cleared.");
+  }
 });
 
 // "Update ready" reloads the page, so offer it only while not listening.

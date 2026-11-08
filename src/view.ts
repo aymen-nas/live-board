@@ -45,8 +45,16 @@ export function renderChips(question: string | null): void {
   els.chips.innerHTML = parts.join("");
 }
 
+// Something that isn't a model answer takes the answer area: the answer
+// that was there moves to the history instead of vanishing.
+export function showNotice(text: string, muted = true): void {
+  state.shownSeq = 0;
+  showAnswer(text, muted);
+  renderHistory();
+}
+
 export function showQuestion(q: string): void {
-  showAnswer(q);
+  showNotice(q, false);
   flash();
   state.shownQuestions.add(q);
 }

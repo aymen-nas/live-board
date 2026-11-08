@@ -144,4 +144,53 @@ describe("answer flow", () => {
     expect(screen().textContent).toContain("Key rejected by the provider");
     expect(screen().classList.contains("error")).toBe(true);
   });
+
+  it("an auto answer that fails mid-stream gives the screen back to the last full answer", async () => {
+    void ask(false, 0);
+    calls[0]!.finish("Earlier full answer.");
+    await tick();
+    void ask(false, 1);
+    calls[1]!.stream("Yes, the cost is about");
+    calls[1]!.fail(Object.assign(new Error("Overloaded"), { status: 529 }));
+    await tick();
+    expect(screen().textContent).toBe("Earlier full answer.");
+    expect(screen().classList.contains("muted")).toBe(true);
+    expect(meta()).toContain("Overloaded");
+  });
+
+  it("an auto re-ask of a line I tapped doesn't start a second call", async () => {
+    void ask(true, 2);
+    void ask(false, 2);
+    expect(calls).toHaveLength(1);
+    calls[0]!.stream("Tapped answer");
+    calls[0]!.finish("Tapped answer.");
+    await tick();
+    expect(screen().textContent).toBe("Tapped answer.");
+  });
+
+  it("a tap's late error doesn't cover a newer answer", async () => {
+    void ask(true, 1);
+    void ask(false, 3);
+    calls[1]!.stream("Newer answer");
+    calls[0]!.fail(Object.assign(new Error("timeout"), { status: 504 }));
+    await tick();
+    expect(screen().textContent).toBe("Newer answer");
+    calls[1]!.finish("Newer answer.");
+    await tick();
+    expect(history()).toEqual([]);
+    expect(screen().textContent).toBe("Newer answer.");
+  });
+
+  it("with no answers yet, a cut-off stream doesn't block an older call from drawing", async () => {
+    void ask(false, 0); // A, still waiting
+    void ask(false, 2); // early fire
+    calls[1]!.stream("Half an");
+    void ask(false, 2); // re-ask
+    calls[2]!.finish("—");
+    await tick();
+    expect(screen().textContent).toBe("");
+    calls[0]!.finish("A answer.");
+    await tick();
+    expect(screen().textContent).toBe("A answer.");
+  });
 });

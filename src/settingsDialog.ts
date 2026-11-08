@@ -2,14 +2,14 @@
 // phone, the pasted board, and provider/key/language.
 
 import { preconnect } from "./connection";
-import { resetListening, stt } from "./listening";
+import { newMeeting, stt } from "./listening";
 import { fetchRemoteBoard, listRemoteBoards } from "./github";
 import { defaultBoardName, deleteBoard, listBoards, saveBoard } from "./library";
 import { PROVIDERS, warmCache, type Provider } from "./llm";
 import { DEFAULTS, cleanSecret, fixProviderForKey, providerForKey } from "./settings";
-import { SIM, forgetMeeting, persistSettings, settings, state } from "./state";
-import { $, els, escapeHtml, setMeta, setStatus, showAnswer } from "./ui";
-import { loadBoard, renderChips, renderHistory, renderLines, renderRate } from "./view";
+import { SIM, persistSettings, settings, state } from "./state";
+import { $, els, escapeHtml, setStatus } from "./ui";
+import { loadBoard, renderRate, showNotice } from "./view";
 
 const input = (id: string) => $<HTMLInputElement>(id);
 
@@ -69,8 +69,6 @@ async function useRemote(path: string): Promise<void> {
   $("remoteInfo").textContent = "Loading…";
   try {
     const text = await fetchRemoteBoard({ repo: settings.ghRepo, token: settings.ghToken }, path);
-    settings.boardText = text;
-    settings.boardName = meta.name;
     // Put it in the form and save the whole form, so a key typed in the same
     // visit is kept too.
     $<HTMLTextAreaElement>("boardText").value = text;
@@ -156,7 +154,7 @@ function saveFromDialog(): void {
       .catch((err) => setStatus(`Cache warm failed: ${err instanceof Error ? err.message : String(err)}`));
   }
   if ((boardChanged || settings.apiKey !== before.key) && !stt.isListening()) {
-    showAnswer(
+    showNotice(
       !settings.apiKey
         ? "Add your API key under Provider, key and language to get answers."
         : state.board
@@ -165,23 +163,6 @@ function saveFromDialog(): void {
       true,
     );
   }
-}
-
-function clearTranscript(): void {
-  resetListening();
-  forgetMeeting();
-  state.transcript.length = 0;
-  state.session.length = 0;
-  state.answers.length = 0;
-  state.shownQuestions.clear();
-  state.questionIndex = 0;
-  state.lastAnswerAt = 0;
-  state.currentCard = null;
-  setMeta("");
-  renderLines();
-  renderHistory();
-  renderChips(null);
-  showAnswer("Transcript cleared.", true);
 }
 
 export function initSettings(): void {
@@ -213,5 +194,5 @@ export function initSettings(): void {
     deleteBoard(name);
     renderLibrary();
   });
-  $("clearBtn").addEventListener("click", clearTranscript);
+  $("clearBtn").addEventListener("click", () => newMeeting("Transcript cleared."));
 }
