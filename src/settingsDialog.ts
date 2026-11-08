@@ -25,6 +25,7 @@ function renderLibrary(): void {
 
 // What the user picked in this visit; a background sync must not undo it.
 let userPicked = "";
+let visit = 0; // bumped on every open, so a late board download can't save a later visit's form
 
 function renderRemote(): void {
   const select = $<HTMLSelectElement>("remote");
@@ -67,8 +68,11 @@ async function useRemote(path: string): Promise<void> {
   const meta = state.remoteBoards.find((b) => b.path === path);
   if (!meta) return;
   $("remoteInfo").textContent = "Loading…";
+  const thisVisit = visit;
   try {
     const text = await fetchRemoteBoard({ repo: settings.ghRepo, token: settings.ghToken }, path);
+    // Closed meanwhile (edits discarded) or reopened: don't save that form.
+    if (thisVisit !== visit || !els.settings.open) return;
     // Put it in the form and save the whole form, so a key typed in the same
     // visit is kept too.
     $<HTMLTextAreaElement>("boardText").value = text;
@@ -100,6 +104,7 @@ function readGitHubFields(): void {
 
 export function openSettings(): void {
   userPicked = "";
+  visit++;
   $<HTMLSelectElement>("provider").value = settings.provider;
   input("apiKey").value = settings.apiKey;
   input("myName").value = settings.myName;
@@ -159,7 +164,9 @@ function saveFromDialog(): void {
         ? "Add your API key under Provider, key and language to get answers."
         : state.board
           ? `${settings.boardName} loaded. Start listening.`
-          : "Key saved. Step 2: tap ⚙︎ and pick a board.",
+          : settings.apiKey !== before.key
+            ? "Key saved. Step 2: tap ⚙︎ and pick a board."
+            : "No board loaded.",
       true,
     );
   }

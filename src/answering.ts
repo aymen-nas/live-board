@@ -2,11 +2,15 @@
 //
 // Auto calls run side by side: a later line that turns out not to be for me
 // must not cancel an answer that is still streaming. A tap (forced) replaces
-// everything in flight; a re-ask of the same line replaces that line's auto
-// call, but never a tap. Only the newest call that has text may draw. Answers
-// are kept in call order, so one that finishes late lands in the history.
-// Auto calls never put an error on the answer area; they note it in the top
-// line, so a failing filler line can't hide a good answer.
+// everything in flight, and an auto re-ask of a line replaces that line's
+// auto call (a line I tapped isn't re-asked at all).
+//
+// The screen has one owner (state.screen): a streaming call, a finished
+// answer or a notice. A call may draw only if no newer call has drawn
+// before (`newest` only goes up), so an older answer finishing late goes to
+// the history. A stream that ends without an answer (aborted, failed) is
+// replaced by the last full answer, dimmed. Auto calls never put an error
+// on the answer area; they note it in the top line.
 
 import { windowEndingAt } from "./conversation";
 import { ProviderError, answer } from "./llm";
@@ -24,8 +28,7 @@ interface Call {
 
 const live = new Map<number, Call>();
 let lastSeq = 0;
-// The text on screen is a stream that was cut off (its call was replaced).
-let partialOnScreen = false;
+let newest = 0; // the newest call whose text is on screen or became an answer
 
 function renderBusy(): void {
   els.answer.classList.toggle("thinking", live.size > 0);
@@ -36,24 +39,25 @@ export function isAnswering(): boolean {
 }
 
 function abort(c: Call): void {
-  if (c.seq === state.shownSeq) partialOnScreen = true;
   c.controller.abort();
   live.delete(c.seq);
 }
 
+// New meeting: drop every call and forget who drew last.
 export function cancelAll(): void {
   for (const c of [...live.values()]) abort(c);
-  partialOnScreen = false;
+  newest = 0;
   renderBusy();
 }
 
-// A cut-off stream is on screen and nothing else will replace it: put the
-// last full answer back, dimmed.
-function restoreIfPartial(): void {
-  if (!partialOnScreen || live.has(state.shownSeq)) return;
-  partialOnScreen = false;
+// A stream on screen whose call is gone without an answer: put the last
+// full answer back, dimmed. A notice or a finished answer is left alone.
+function restoreIfStale(): void {
+  const s = state.screen;
+  if (s.kind !== "stream" || live.has(s.seq)) return;
   const last = state.answers[state.answers.length - 1];
-  state.shownSeq = last?.seq ?? 0;
+  state.screen = last ? { kind: "answer", seq: last.seq } : { kind: "notice" };
+  newest = last?.seq ?? 0; // the cut-off call no longer counts; older answers may draw
   showAnswer(last?.text ?? "", true);
   renderHistory();
 }
@@ -107,15 +111,17 @@ export async function ask(forced: boolean, upto = state.transcript.length - 1): 
   renderRate();
 
   const askedAt = forced ? calledAt : window_[window_.length - 1]!.at;
-  const mayDraw = (): boolean => call.seq >= state.shownSeq;
-  let drawing = false;
-  const draw = (): void => {
-    if (drawing) return;
-    drawing = true;
-    state.shownSeq = call.seq;
-    partialOnScreen = false;
-    flash();
-    renderHistory(); // the answer that was on screen moves to the history
+  const canDraw = (): boolean => call.seq >= newest;
+  const owns = (): boolean => state.screen.kind !== "notice" && state.screen.seq === call.seq;
+  // Take the screen (again, if a notice took it meanwhile).
+  const take = (kind: "stream" | "answer"): void => {
+    const fresh = !owns();
+    newest = call.seq;
+    state.screen = { kind, seq: call.seq };
+    if (fresh) {
+      flash();
+      renderHistory(); // the answer that was on screen moves to the history
+    }
   };
 
   try {
@@ -129,33 +135,32 @@ export async function ask(forced: boolean, upto = state.transcript.length - 1): 
       forced,
       signal: call.controller.signal,
       onFirstToken: () => {
-        if (mayDraw()) setMeta(`${Date.now() - askedAt} ms`);
+        if (canDraw()) setMeta(`${Date.now() - askedAt} ms`);
       },
       onDelta: (text) => {
-        if (!mayDraw()) return;
-        draw();
+        if (!canDraw()) return;
+        take("stream");
         showAnswer(text);
       },
     });
     if (call.controller.signal.aborted) return;
     const now = Date.now();
     if (result.silent) {
-      restoreIfPartial();
       if (forced) {
-        // I asked and got nothing: keep the last answer, dimmed, and say so.
+        // I asked and got nothing. If nothing newer is showing, dim what is there and say so.
         setMeta("Nothing to say on that line.");
-        els.answer.classList.add("muted");
-      } else if (live.size === 1 && state.shownSeq < call.seq) {
-        // Nothing for me and nothing newer on its way: the answer on screen is old.
+        if (canDraw() && state.screen.kind === "answer") els.answer.classList.add("muted");
+      } else if (live.size === 1 && canDraw() && state.screen.kind === "answer") {
+        // Nothing for me and nothing else on its way: the answer on screen is old.
         els.answer.classList.add("muted");
       }
     } else {
-      if (mayDraw()) {
-        draw();
+      fileAnswer({ at: now, text: result.text, seq: call.seq });
+      if (canDraw()) {
+        take("answer");
         showAnswer(result.text);
         announce(result.text);
       }
-      fileAnswer({ at: now, text: result.text, seq: call.seq });
       state.session.push({ at: now, kind: "answer", text: result.text });
       state.lastAnswerAt = now;
       renderHistory();
@@ -163,7 +168,7 @@ export async function ask(forced: boolean, upto = state.transcript.length - 1): 
       rememberMeeting();
     }
     if (SIM) simLog.push({ at: now, kind: result.silent ? "silent" : "answer", text: result.text, ms: now - askedAt });
-    if (settings.provider === "anthropic" && drawing) {
+    if (settings.provider === "anthropic" && owns()) {
       const cache = result.cacheRead > 0 ? "cached" : result.cacheWrite > 0 ? "cache written" : "no cache";
       setMeta(`${els.meta.textContent} · ${cache}`);
     }
@@ -174,21 +179,18 @@ export async function ask(forced: boolean, upto = state.transcript.length - 1): 
       limiter()?.unrecord(calledAt); // it never reached the provider
       renderRate();
     }
-    if (!forced && drawing) {
-      // It failed mid-stream: its fragment isn't an answer, put the last one back.
-      live.delete(call.seq);
-      partialOnScreen = true;
-    }
-    restoreIfPartial();
-    if (forced && mayDraw()) {
-      draw();
+    if (forced && canDraw()) {
+      newest = call.seq;
+      state.screen = { kind: "notice" };
       showError(text);
+      renderHistory();
     } else {
       setMeta(text);
     }
     if (SIM) simLog.push({ at: Date.now(), kind: "error", text: err instanceof Error ? err.message : String(err) });
   } finally {
     live.delete(call.seq);
+    restoreIfStale();
     renderBusy();
   }
 }

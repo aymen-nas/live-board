@@ -19,13 +19,15 @@ export function renderLines(): void {
     .slice(from)
     .map((u, k) => `<button class="line" data-i="${from + k}">${escapeHtml(u.text)}</button>`)
     .join("");
+  els.lines.dataset.autoscroll = String(Date.now());
   els.lines.scrollTop = els.lines.scrollHeight; // newest line in view
 }
 
 export function renderHistory(): void {
   // Every finished answer except the one on screen, newest first.
+  const onScreen = state.screen.kind === "notice" ? null : state.screen.seq;
   els.history.innerHTML = state.answers
-    .filter((a) => a.seq !== state.shownSeq)
+    .filter((a) => a.seq !== onScreen)
     .slice(-HISTORY)
     .reverse()
     .map((a) => `<div>${escapeHtml(a.text)}</div>`)
@@ -48,7 +50,7 @@ export function renderChips(question: string | null): void {
 // Something that isn't a model answer takes the answer area: the answer
 // that was there moves to the history instead of vanishing.
 export function showNotice(text: string, muted = true): void {
-  state.shownSeq = 0;
+  state.screen = { kind: "notice" };
   showAnswer(text, muted);
   renderHistory();
 }

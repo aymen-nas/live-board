@@ -16,8 +16,12 @@ export const SIM = simEnabled();
 export interface Answer {
   at: number;
   text: string;
-  seq: number;
+  seq: number; // the call that made it; restored ones are negative
 }
+
+// What the answer area shows: a call's text while it streams, a finished
+// answer, or a notice (welcome, errors, a suggested question).
+export type Screen = { kind: "stream" | "answer"; seq: number } | { kind: "notice" };
 
 export const settings = loadSettings();
 fixProviderForKey(settings);
@@ -28,10 +32,9 @@ export const state = {
   systemPrompt: "",
   transcript: [] as Utterance[],
   session: [] as SessionEntry[], // what was heard and suggested, for Copy
-  // Finished answers in call order. `seq` is the call that made each one;
-  // the answer whose seq is shownSeq is the one on screen (not in history).
+  // Finished answers in call order; the one on screen is left out of the history.
   answers: [] as Answer[],
-  shownSeq: 0,
+  screen: { kind: "notice" } as Screen,
   shownQuestions: new Set<string>(),
   questionIndex: 0,
   currentCard: null as Card | null,

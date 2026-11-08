@@ -12,7 +12,7 @@
 
 import "./style.css";
 import { els, setMeta, setStatus, showAnswer, showCard, environment } from "./ui";
-import { ask } from "./answering";
+import { ask, isAnswering } from "./answering";
 import { preconnect } from "./connection";
 import { LISTENING_CHANGED, newMeeting, stt, toggleListening } from "./listening";
 import { loadMeeting } from "./meeting";
@@ -42,10 +42,20 @@ els.lines.addEventListener("pointerdown", (e) => {
   touchedLine = i === null ? null : { i, y: e.clientY };
   if (i !== null) els.lines.setPointerCapture(e.pointerId);
 });
+// A tap that only stops a scroll fling isn't a request for an answer.
+let lastScrollAt = 0;
+els.lines.addEventListener(
+  "scroll",
+  () => {
+    // The list scrolling itself to the newest line doesn't count.
+    if (Date.now() - Number(els.lines.dataset.autoscroll ?? 0) > 100) lastScrollAt = Date.now();
+  },
+  { passive: true },
+);
 els.lines.addEventListener("pointerup", (e) => {
   const t = touchedLine;
   touchedLine = null;
-  if (t && Math.abs(e.clientY - t.y) < 12) void ask(true, t.i);
+  if (t && Math.abs(e.clientY - t.y) < 12 && Date.now() - lastScrollAt > 150) void ask(true, t.i);
 });
 els.lines.addEventListener("pointercancel", () => {
   touchedLine = null;
@@ -88,9 +98,10 @@ els.auto.addEventListener("change", () => {
 
 // Offline: say so right away instead of letting calls fail one by one. Back
 // online, clear only our own "Offline" (not a mic error or a missing engine).
-const TRANSIENT = /^(Ready|Listening|Stopped|Idle|Simulation finished)/;
+// Statuses that say something is broken stay; anything else gives way to "Offline".
+const STICKY = /^(Mic error|Speech service|Could not start|No speech|Speech recognition not|Cache warm failed)/;
 window.addEventListener("offline", () => {
-  if (TRANSIENT.test(els.status.textContent ?? "") || !els.status.textContent) setStatus("Offline");
+  if (!STICKY.test(els.status.textContent ?? "")) setStatus("Offline");
 });
 window.addEventListener("online", () => {
   if (els.status.textContent === "Offline") setStatus(stt.isListening() ? "Listening" : "Ready");
@@ -101,13 +112,17 @@ window.addEventListener("pagehide", flushMeeting);
 // iOS often resumes the app hours later instead of restarting it: a meeting
 // whose last line is over 30 minutes old is over, so start fresh.
 const STALE_MS = 30 * 60_000;
+const AWAY_MS = 60_000; // a quick switch to another app is not "later"
+let hiddenAt = 0;
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
+    hiddenAt = Date.now();
     flushMeeting();
     return;
   }
   const last = state.transcript[state.transcript.length - 1];
-  if (!stt.isListening() && last && Date.now() - last.at > STALE_MS) {
+  const away = hiddenAt > 0 && Date.now() - hiddenAt > AWAY_MS;
+  if (away && !stt.isListening() && !isAnswering() && last && Date.now() - last.at > STALE_MS) {
     newMeeting("New meeting. The last one ended over 30 minutes ago and was cleared.");
   }
 });
@@ -158,7 +173,8 @@ if (saved && saved.transcript.length) {
   state.session.push(...saved.session);
   // Earlier calls get negative numbers, so this session's calls (1, 2, …) are newer.
   saved.answers.forEach((a, k) => state.answers.push({ at: a.at, text: a.text, seq: k - saved.answers.length }));
-  state.shownSeq = state.answers[state.answers.length - 1]?.seq ?? 0;
+  const lastSaved = state.answers[state.answers.length - 1];
+  state.screen = lastSaved ? { kind: "answer", seq: lastSaved.seq } : { kind: "notice" };
   renderLines();
   renderHistory();
   const last = state.answers[state.answers.length - 1];

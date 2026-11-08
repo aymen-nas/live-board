@@ -128,7 +128,7 @@ export function newMeeting(message: string): void {
   state.transcript.length = 0;
   state.session.length = 0;
   state.answers.length = 0;
-  state.shownSeq = 0;
+  state.screen = { kind: "notice" };
   state.shownQuestions.clear();
   state.questionIndex = 0;
   state.lastAnswerAt = 0;

@@ -23,8 +23,9 @@ the server: keys, boards and the meeting live only in the phone's storage.
    saves.
 4. **Start**, allow the microphone, keep the screen on. The red dot means
    listening. The blue italic line is live speech, the big text is what to
-   say, and a sliding bar above it means an answer is on its way. Errors show
-   in red with the provider's message.
+   say, and a sliding bar above it means an answer is on its way. Errors from
+   **Answer** or a tapped line show in red with the provider's message; errors
+   from automatic answers show in the top line.
 5. **Answer** forces an answer on the last line; tap any line in the list to
    answer that one. **Question** cycles the question bank. The 📌 chip opens
    the matching board card as a sheet, and the 💡 chip suggests a question
@@ -35,7 +36,8 @@ the server: keys, boards and the meeting live only in the phone's storage.
 listening, an **Update ready · tap** pill appears; tapping it reloads into the
 new version. The meeting (transcript and answers) survives the reload: it is
 restored if the app opens again within 30 minutes of the last line, and
-cleared after that, also when iOS resumes the app instead of restarting it.
+cleared after that, also when iOS resumes the app after more than a minute
+away instead of restarting it.
 So tap ⧉ right after a meeting if you want its transcript. ⚙︎ → **New
 meeting** clears it at once. After the
 8 Nov 2026 update that added the pill, close the app once from the app

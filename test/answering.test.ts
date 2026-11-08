@@ -60,7 +60,7 @@ beforeEach(() => {
   st.state.transcript.length = 0;
   st.state.answers.length = 0;
   st.state.session.length = 0;
-  st.state.shownSeq = 0;
+  st.state.screen = { kind: "notice" };
   const now = Date.now();
   for (let i = 0; i < 4; i++) st.state.transcript.push({ text: `line ${i}`, at: now - (4 - i) * 1000 });
   screen().textContent = "";
@@ -192,5 +192,62 @@ describe("answer flow", () => {
     calls[0]!.finish("A answer.");
     await tick();
     expect(screen().textContent).toBe("A answer.");
+  });
+
+  it("after a notice mid-stream, the stream takes the screen back and an older answer can't overwrite it", async () => {
+    const { showNotice } = await import("../src/view");
+    void ask(false, 0); // A, older
+    void ask(false, 1); // B
+    calls[1]!.stream("B partial");
+    showNotice("A suggested question?", false);
+    calls[1]!.stream("B full answer");
+    calls[1]!.finish("B full answer.");
+    await tick();
+    expect(screen().textContent).toBe("B full answer.");
+    expect(history()).not.toContain("B full answer.");
+    calls[0]!.finish("A older answer.");
+    await tick();
+    expect(screen().textContent).toBe("B full answer.");
+    expect(history()).toContain("A older answer.");
+  });
+
+  it("an overtaken call that fails doesn't dim the current answer", async () => {
+    void ask(false, 0); // A
+    void ask(false, 1); // B
+    calls[0]!.stream("A partial");
+    calls[1]!.stream("B partial");
+    calls[1]!.finish("B full.");
+    await tick();
+    calls[0]!.fail(Object.assign(new Error("Overloaded"), { status: 529 }));
+    await tick();
+    expect(screen().textContent).toBe("B full.");
+    expect(screen().classList.contains("muted")).toBe(false);
+  });
+
+  it("a notice opened while a re-ask is pending isn't overwritten when the re-ask stays silent", async () => {
+    const { showNotice } = await import("../src/view");
+    void ask(false, 0);
+    calls[0]!.finish("Earlier full answer.");
+    await tick();
+    void ask(false, 2);
+    calls[1]!.stream("Half a");
+    void ask(false, 2); // re-ask aborts the early call
+    await tick();
+    showNotice("Is a chat ping still what you want?", false);
+    calls[2]!.finish("—");
+    await tick();
+    expect(screen().textContent).toBe("Is a chat ping still what you want?");
+  });
+
+  it("a silent tap doesn't dim a newer answer", async () => {
+    void ask(true, 1); // tap
+    void ask(false, 3); // newer auto
+    calls[1]!.stream("Newer");
+    calls[1]!.finish("Newer full.");
+    await tick();
+    calls[0]!.finish("—");
+    await tick();
+    expect(screen().textContent).toBe("Newer full.");
+    expect(screen().classList.contains("muted")).toBe(false);
   });
 });
