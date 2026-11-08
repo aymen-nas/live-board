@@ -57,6 +57,7 @@ export function showNotice(text: string, muted = true): void {
 
 export function showQuestion(q: string): void {
   showNotice(q, false);
+  state.screen = { kind: "notice", question: q };
   flash();
   state.shownQuestions.add(q);
 }

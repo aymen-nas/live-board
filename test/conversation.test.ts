@@ -133,6 +133,13 @@ describe("meeting persistence", () => {
     clearMeeting(s);
     expect(loadMeeting(2_000, s)).toBeNull();
   });
+  it("ages a meeting from its last line, not its last save", () => {
+    const s = mem();
+    const lastLine = 0;
+    saveMeeting({ transcript: [{ text: "hi", at: lastLine }], session: [], answers: [] }, 25 * 60_000, s); // saved later by an answer
+    expect(loadMeeting(31 * 60_000, s)).toBeNull();
+  });
+
   it("survives junk in storage", () => {
     const s = mem();
     s.setItem("live-board.meeting", "{bad");

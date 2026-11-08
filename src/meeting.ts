@@ -32,7 +32,9 @@ export function loadMeeting(now = Date.now(), store: Store = localStorage): Save
     const raw = store.getItem(KEY);
     if (!raw) return null;
     const m = JSON.parse(raw) as SavedMeeting;
-    if (!m || now - m.savedAt > MAX_AGE_MS || !Array.isArray(m.transcript)) {
+    // Age from the last line heard (like the check on resume), not the last save.
+    const lastLine = Array.isArray(m?.transcript) ? m.transcript[m.transcript.length - 1]?.at : undefined;
+    if (!m || !Array.isArray(m.transcript) || now - (lastLine ?? m.savedAt) > MAX_AGE_MS) {
       store.removeItem(KEY); // too old or broken: don't keep the room's transcript around
       return null;
     }

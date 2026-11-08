@@ -12,7 +12,7 @@
 
 import "./style.css";
 import { els, setMeta, setStatus, showAnswer, showCard, environment } from "./ui";
-import { ask, isAnswering } from "./answering";
+import { ask } from "./answering";
 import { preconnect } from "./connection";
 import { LISTENING_CHANGED, newMeeting, stt, toggleListening } from "./listening";
 import { loadMeeting } from "./meeting";
@@ -32,14 +32,14 @@ els.answerBtn.addEventListener("click", () => void ask(true));
 // can arrive while the finger is down and rebuild the list; iOS then drops
 // the click. So the line is taken where the touch started and answered on
 // finger-up; a drag (scrolling the list) is not a tap.
-let touchedLine: { i: number; y: number } | null = null;
+let touchedLine: { i: number; y: number; at: number } | null = null;
 const lineIndex = (target: EventTarget | null): number | null => {
   const i = Number((target as HTMLElement | null)?.closest<HTMLElement>(".line")?.dataset.i);
   return Number.isInteger(i) ? i : null;
 };
 els.lines.addEventListener("pointerdown", (e) => {
   const i = lineIndex(e.target);
-  touchedLine = i === null ? null : { i, y: e.clientY };
+  touchedLine = i === null ? null : { i, y: e.clientY, at: Date.now() };
   if (i !== null) els.lines.setPointerCapture(e.pointerId);
 });
 // A tap that only stops a scroll fling isn't a request for an answer.
@@ -47,15 +47,19 @@ let lastScrollAt = 0;
 els.lines.addEventListener(
   "scroll",
   () => {
-    // The list scrolling itself to the newest line doesn't count.
-    if (Date.now() - Number(els.lines.dataset.autoscroll ?? 0) > 100) lastScrollAt = Date.now();
+    const l = els.lines;
+    // The list scrolling itself to the newest line, or the layout clamping it
+    // at the bottom, isn't a fling.
+    const atBottom = l.scrollTop >= l.scrollHeight - l.clientHeight - 1;
+    if (!atBottom && Date.now() - Number(l.dataset.autoscroll ?? 0) > 100) lastScrollAt = Date.now();
   },
   { passive: true },
 );
 els.lines.addEventListener("pointerup", (e) => {
   const t = touchedLine;
   touchedLine = null;
-  if (t && Math.abs(e.clientY - t.y) < 12 && Date.now() - lastScrollAt > 150) void ask(true, t.i);
+  // Not a tap if the list was moving when the finger landed (stopping a fling) or moved since.
+  if (t && Math.abs(e.clientY - t.y) < 12 && lastScrollAt < t.at - 100) void ask(true, t.i);
 });
 els.lines.addEventListener("pointercancel", () => {
   touchedLine = null;
@@ -122,7 +126,8 @@ document.addEventListener("visibilitychange", () => {
   }
   const last = state.transcript[state.transcript.length - 1];
   const away = hiddenAt > 0 && Date.now() - hiddenAt > AWAY_MS;
-  if (away && !stt.isListening() && !isAnswering() && last && Date.now() - last.at > STALE_MS) {
+  // While hidden the mic heard nothing; a last line this old means the meeting is over.
+  if (away && last && Date.now() - last.at > STALE_MS) {
     newMeeting("New meeting. The last one ended over 30 minutes ago and was cleared.");
   }
 });

@@ -250,4 +250,35 @@ describe("answer flow", () => {
     expect(screen().textContent).toBe("Newer full.");
     expect(screen().classList.contains("muted")).toBe(false);
   });
+
+  it("a re-ask keeps the cut-off text until it draws: no flash of the old answer, no older call sneaking in", async () => {
+    void ask(false, 0);
+    calls[0]!.finish("Earlier full answer.");
+    await tick();
+    void ask(false, 1); // A, older line, still waiting
+    void ask(false, 2); // early fire
+    calls[2]!.stream("Yes, the cost is about");
+    void ask(false, 2); // re-ask
+    await tick();
+    expect(screen().textContent).toBe("Yes, the cost is about");
+    calls[1]!.finish("Answer for line one.");
+    await tick();
+    expect(screen().textContent).toBe("Yes, the cost is about");
+    expect(history()).toContain("Answer for line one.");
+    calls[3]!.stream("Yes, the cost is about 40k");
+    calls[3]!.finish("Yes, the cost is about 40k a quarter.");
+    await tick();
+    expect(screen().textContent).toBe("Yes, the cost is about 40k a quarter.");
+  });
+
+  it("a question I asked for stays as a chip when an answer takes the screen", async () => {
+    const { showQuestion } = await import("../src/view");
+    void ask(false, 1);
+    calls[0]!.stream("Part one");
+    showQuestion("Is a chat ping still what you want?");
+    calls[0]!.stream("Part one, part two");
+    await tick();
+    expect(screen().textContent).toBe("Part one, part two");
+    expect(document.querySelector("#chips [data-chip=question]")?.textContent).toContain("Is a chat ping");
+  });
 });

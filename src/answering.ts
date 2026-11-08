@@ -105,6 +105,10 @@ export async function ask(forced: boolean, upto = state.transcript.length - 1): 
   }
   const call: Call = { seq: ++lastSeq, upto, forced, controller: new AbortController() };
   live.set(call.seq, call);
+  // The stream on screen was just cut off by this call (a re-ask or a tap):
+  // this call inherits its place, so the cut-off text stays until this one
+  // draws, and the last answer comes back only if this one ends with nothing.
+  if (state.screen.kind === "stream" && !live.has(state.screen.seq)) state.screen = { kind: "stream", seq: call.seq };
   renderBusy();
   const calledAt = Date.now();
   limiter()?.record(calledAt);
@@ -113,14 +117,19 @@ export async function ask(forced: boolean, upto = state.transcript.length - 1): 
   const askedAt = forced ? calledAt : window_[window_.length - 1]!.at;
   const canDraw = (): boolean => call.seq >= newest;
   const owns = (): boolean => state.screen.kind !== "notice" && state.screen.seq === call.seq;
+  let drawn = false;
   // Take the screen (again, if a notice took it meanwhile).
   const take = (kind: "stream" | "answer"): void => {
-    const fresh = !owns();
+    const before = state.screen;
+    const fresh = !drawn || !owns();
+    drawn = true;
     newest = call.seq;
     state.screen = { kind, seq: call.seq };
     if (fresh) {
       flash();
       renderHistory(); // the answer that was on screen moves to the history
+      // A question I asked for stays one tap away.
+      if (before.kind === "notice" && before.question) renderChips(before.question);
     }
   };
 
@@ -168,7 +177,7 @@ export async function ask(forced: boolean, upto = state.transcript.length - 1): 
       rememberMeeting();
     }
     if (SIM) simLog.push({ at: now, kind: result.silent ? "silent" : "answer", text: result.text, ms: now - askedAt });
-    if (settings.provider === "anthropic" && owns()) {
+    if (settings.provider === "anthropic" && state.screen.kind === "answer" && owns()) {
       const cache = result.cacheRead > 0 ? "cached" : result.cacheWrite > 0 ? "cache written" : "no cache";
       setMeta(`${els.meta.textContent} · ${cache}`);
     }

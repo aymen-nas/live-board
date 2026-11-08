@@ -21,7 +21,9 @@ export interface Answer {
 
 // What the answer area shows: a call's text while it streams, a finished
 // answer, or a notice (welcome, errors, a suggested question).
-export type Screen = { kind: "stream" | "answer"; seq: number } | { kind: "notice" };
+// A question the user asked for (Question, 💡) is remembered so it isn't lost
+// when an answer takes the screen.
+export type Screen = { kind: "stream" | "answer"; seq: number } | { kind: "notice"; question?: string };
 
 export const settings = loadSettings();
 fixProviderForKey(settings);

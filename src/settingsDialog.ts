@@ -71,16 +71,18 @@ async function useRemote(path: string): Promise<void> {
   const thisVisit = visit;
   try {
     const text = await fetchRemoteBoard({ repo: settings.ghRepo, token: settings.ghToken }, path);
-    // Closed meanwhile (edits discarded) or reopened: don't save that form.
-    if (thisVisit !== visit || !els.settings.open) return;
+    // Closed with Close (edits discarded) or reopened since: don't save that form.
+    // (After Save the form holds what was saved, so applying the board is fine.)
+    if (thisVisit !== visit) return;
     // Put it in the form and save the whole form, so a key typed in the same
     // visit is kept too.
     $<HTMLTextAreaElement>("boardText").value = text;
     input("boardName").value = meta.name;
     saveFromDialog();
     $("remoteInfo").textContent = `Using ${meta.name}`;
-    els.settings.close();
+    if (els.settings.open) els.settings.close();
   } catch (err) {
+    if (thisVisit !== visit) return;
     $("remoteInfo").textContent = err instanceof Error ? err.message : String(err);
   }
 }
@@ -176,7 +178,11 @@ export function initSettings(): void {
   $("settingsBtn").addEventListener("click", openSettings);
   // Save is the form's only submit button, so Return/Go on the keyboard saves.
   $("saveBtn").addEventListener("click", saveFromDialog);
-  $("closeBtn").addEventListener("click", () => els.settings.close());
+  $("closeBtn").addEventListener("click", () => {
+    visit++; // discard: a board download still running must not save this form
+    els.settings.close();
+  });
+  els.settings.addEventListener("cancel", () => visit++); // Escape / swipe-to-dismiss
   $<HTMLSelectElement>("provider").addEventListener("change", (e) => {
     applyProviderDefaults((e.target as HTMLSelectElement).value as Provider);
   });
