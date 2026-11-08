@@ -1,0 +1,9 @@
+{
+  // Tests, the replay script and the Vite config: checked like src/, with Node types.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node", "vite/client", "vite-plugin-pwa/client"],
+    "lib": ["ES2023", "DOM"]
+  },
+  "include": ["test", "scripts", "vite.config.ts", "src"]
+}
