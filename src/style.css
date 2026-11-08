@@ -60,6 +60,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 button.primary.live { background: var(--live); border-color: var(--live); color: #fff; }
 button.ghost { background: transparent; border-color: transparent; color: var(--dim); }
 button.icon {
+  flex: none;
   background: transparent;
   border-color: transparent;
   color: var(--dim);
@@ -86,12 +87,15 @@ header #meta {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-header #status { flex: 1 1 auto; display: flex; align-items: center; gap: 8px; }
+header #status { flex: 1 1 auto; }
+/* Inline dot, so the text keeps its ellipsis when it's too long. */
 header #status::before {
   content: "";
-  flex: none;
+  display: inline-block;
+  vertical-align: middle;
   width: 8px;
   height: 8px;
+  margin: 0 8px 2px 0;
   border-radius: 50%;
   background: var(--dim);
 }

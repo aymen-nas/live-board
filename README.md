@@ -33,8 +33,11 @@ the server: keys, boards and the meeting live only in the phone's storage.
 
 **Updates.** A new version downloads in the background. When you're not
 listening, an **Update ready · tap** pill appears; tapping it reloads into the
-new version. The meeting (transcript and answers) survives the reload and is
-kept for 12 hours; ⚙︎ → **New meeting** clears it.
+new version. The meeting (transcript and answers) survives the reload: it is
+restored if the app opens again within 30 minutes of the last line, and
+deleted after that. ⚙︎ → **New meeting** clears it at once. After the
+8 Nov 2026 update that added the pill, close the app once from the app
+switcher; older versions can't show it.
 
 ## Boards from Claude Code (no copy-paste)
 
@@ -73,7 +76,8 @@ replaces it, and the app asks again only if it added 4 or more words. The top
 line shows the gain, e.g. `900 ms · 600 ms early`. Calls run side by side, so
 a later line can't cancel an answer that is streaming. The connection to the
 provider opens when the app loads and stays warm while listening, and the
-Anthropic SDK (380 KB) loads only when Anthropic is the provider. Sending only
+Anthropic SDK (380 KB) is parsed only when Anthropic is the provider (the
+service worker still downloads it once per version). Sending only
 the matching cards made no difference on the free Gemma model (8 calls, 7.7k
 vs 3k tokens: the wait is Routeway's queue), so the whole board is sent.
 
@@ -85,7 +89,7 @@ npm run dev         # https://localhost:5173 (self-signed)
 npm run dev:phone   # same, open to the LAN for the iPhone: https://<laptop-ip>:5173
 npm run dev:http    # plain HTTP on localhost
 npm run typecheck   # src, tests, scripts, vite config
-npm test            # 51 unit tests
+npm test            # unit tests
 ```
 
 `dev:phone` exposes the dev server to the local network, including
@@ -94,7 +98,7 @@ npm test            # 51 unit tests
 Code map: `main.ts` wires the pieces; `ui.ts` (markup, display helpers),
 `state.ts` (settings and meeting state), `view.ts` (rendering, board loading),
 `listening.ts` (speech → transcript → when to ask), `early.ts` (early fire),
-`answering.ts` (streamed calls), `llm.ts` (providers), `connection.ts`
+`answering.ts` (streamed calls, tested with a fake model), `llm.ts` (providers), `connection.ts`
 (keep-warm), `settingsDialog.ts`, `meeting.ts` (survives reloads),
 `update.ts` (update prompt), `stt.ts` (speech recognition), `board.ts`,
 `match.ts`, `conversation.ts` (pure helpers).
@@ -144,5 +148,5 @@ Pushes to `main` typecheck, test, build and deploy to GitHub Pages.
 - Transcription quality on product names and codes depends on Apple's engine;
   the board tells the model to read through garbled names.
 - Every GitHub Pages site of the `aymen-nas` account shares this app's
-  storage (keys, token, boards). Don't publish another repo of this account
+  storage (keys, token, boards, the saved meeting). Don't publish another repo of this account
   to Pages; if that's ever needed, move the app to its own domain.

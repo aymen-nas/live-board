@@ -48,7 +48,7 @@ async function withRetry<T>(fn: () => Promise<T>, tries = 3): Promise<T> {
     try {
       return await fn();
     } catch (err: any) {
-      if (attempt >= tries || !/429/.test(String(err?.message))) throw err;
+      if (attempt >= tries || (err?.status !== 429 && !/429/.test(String(err?.message)))) throw err;
       process.stdout.write("   (rate limited, waiting 20 s)\n");
       await new Promise((r) => setTimeout(r, 20_000));
     }

@@ -61,6 +61,19 @@ describe("Stt", () => {
     expect(finals).toEqual(["hello there"]);
   });
 
+  it("Stop still delivers the sentence in progress", () => {
+    const { cb, finals } = cbs();
+    const stt = new Stt(cb);
+    stt.start();
+    const rec = FakeRec.all[0]!;
+    stt.stop();
+    rec.final("Aymen, what is the budget?");
+    rec.onend?.();
+    vi.advanceTimersByTime(5_000);
+    expect(finals).toEqual(["Aymen, what is the budget?"]);
+    expect(FakeRec.all).toHaveLength(1); // no restart after Stop
+  });
+
   it("restarts after a normal end", () => {
     const { cb } = cbs();
     const stt = new Stt(cb);

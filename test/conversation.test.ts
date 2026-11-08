@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CallLimiter, looksAimedAt, recentIndexes, windowEndingAt, wordCount } from "../src/conversation";
+import { CallLimiter, looksAimedAt, windowEndingAt, wordCount } from "../src/conversation";
 import { DEFAULTS, cleanSecret, fixProviderForKey, loadSettings, saveSettings } from "../src/settings";
 
 const line = (text: string, at: number) => ({ text, at });
@@ -15,13 +15,6 @@ describe("windowEndingAt", () => {
   it("caps at 14 lines", () => {
     const many = Array.from({ length: 30 }, (_, i) => line(`l${i}`, i * 1000));
     expect(windowEndingAt(many, 29)).toHaveLength(14);
-  });
-});
-
-describe("recentIndexes", () => {
-  it("returns the lines of the last 90 s", () => {
-    const t = [line("old", 0), line("new", 100_000)];
-    expect(recentIndexes(t, 150_000)).toEqual([1]);
   });
 });
 
@@ -134,7 +127,9 @@ describe("meeting persistence", () => {
     const s = mem();
     saveMeeting({ transcript: [{ text: "hi", at: 1 }], session: [], answers: [] }, 1_000, s);
     expect(loadMeeting(2_000, s)?.transcript[0]?.text).toBe("hi");
-    expect(loadMeeting(1_000 + 13 * 3_600_000, s)).toBeNull();
+    expect(loadMeeting(1_000 + 31 * 60_000, s)).toBeNull();
+    expect(s.getItem("live-board.meeting")).toBeNull(); // the stale one is deleted
+    saveMeeting({ transcript: [{ text: "hi", at: 1 }], session: [], answers: [] }, 1_000, s);
     clearMeeting(s);
     expect(loadMeeting(2_000, s)).toBeNull();
   });
@@ -142,6 +137,7 @@ describe("meeting persistence", () => {
     const s = mem();
     s.setItem("live-board.meeting", "{bad");
     expect(loadMeeting(0, s)).toBeNull();
+    expect(s.getItem("live-board.meeting")).toBeNull();
   });
 });
 

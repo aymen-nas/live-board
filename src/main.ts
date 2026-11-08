@@ -20,7 +20,7 @@ import { initSettings, syncRemote } from "./settingsDialog";
 import { exportSession } from "./session";
 import { devKey, loadSimBoard } from "./sim";
 import { PROVIDERS } from "./llm";
-import { SIM, persistSettings, settings, state } from "./state";
+import { SIM, flushMeeting, persistSettings, settings, state } from "./state";
 import { sttSupported } from "./stt";
 import { setupUpdates } from "./update";
 import { initChips, loadBoard, renderHistory, renderLines, renderRate, showQuestion } from "./view";
@@ -28,22 +28,32 @@ import { initChips, loadBoard, renderHistory, renderLines, renderRate, showQuest
 els.listen.addEventListener("click", toggleListening);
 els.answerBtn.addEventListener("click", () => void ask(true));
 
-// Tap a transcript line to get the answer to exactly that line. The list can
-// shift while the finger is down (a new line arrives), so the line counts
-// where the touch started, not where it ended.
-let touchedLine: { i: number; at: number } | null = null;
+// Tap a transcript line to get the answer to exactly that line. A new line
+// can arrive while the finger is down and rebuild the list; iOS then drops
+// the click. So the line is taken where the touch started and answered on
+// finger-up; a drag (scrolling the list) is not a tap.
+let touchedLine: { i: number; y: number } | null = null;
 const lineIndex = (target: EventTarget | null): number | null => {
   const i = Number((target as HTMLElement | null)?.closest<HTMLElement>(".line")?.dataset.i);
   return Number.isInteger(i) ? i : null;
 };
 els.lines.addEventListener("pointerdown", (e) => {
   const i = lineIndex(e.target);
-  touchedLine = i === null ? null : { i, at: Date.now() };
+  touchedLine = i === null ? null : { i, y: e.clientY };
+  if (i !== null) els.lines.setPointerCapture(e.pointerId);
 });
-els.lines.addEventListener("click", (e) => {
-  const recent = touchedLine && Date.now() - touchedLine.at < 1_500 ? touchedLine.i : null;
+els.lines.addEventListener("pointerup", (e) => {
+  const t = touchedLine;
   touchedLine = null;
-  const i = recent ?? lineIndex(e.target);
+  if (t && Math.abs(e.clientY - t.y) < 12) void ask(true, t.i);
+});
+els.lines.addEventListener("pointercancel", () => {
+  touchedLine = null;
+});
+// Keyboard (Enter/Space on a focused line) still clicks; taps are handled above.
+els.lines.addEventListener("click", (e) => {
+  if (e.detail !== 0) return;
+  const i = lineIndex(e.target);
   if (i !== null) void ask(true, i);
 });
 
@@ -76,13 +86,18 @@ els.auto.addEventListener("change", () => {
   persistSettings();
 });
 
-// Offline: say so right away instead of letting calls fail one by one.
-const showOnline = (): void => {
-  if (!navigator.onLine) setStatus("Offline");
-  else setStatus(stt.isListening() ? "Listening" : "Ready");
-};
-window.addEventListener("offline", showOnline);
-window.addEventListener("online", showOnline);
+// Offline: say so right away instead of letting calls fail one by one. Back
+// online, clear only our own "Offline" (not a mic error or a missing engine).
+window.addEventListener("offline", () => setStatus("Offline"));
+window.addEventListener("online", () => {
+  if (els.status.textContent === "Offline") setStatus(stt.isListening() ? "Listening" : "Ready");
+});
+
+// Hidden, reloaded or evicted: save the meeting now, not in a second.
+window.addEventListener("pagehide", flushMeeting);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") flushMeeting();
+});
 
 // "Update ready" reloads the page, so offer it only while not listening.
 let reloadForUpdate: (() => void) | null = null;
@@ -128,7 +143,9 @@ const saved = SIM ? null : loadMeeting();
 if (saved && saved.transcript.length) {
   state.transcript.push(...saved.transcript);
   state.session.push(...saved.session);
-  state.answers.push(...saved.answers);
+  // Earlier calls get negative numbers, so this session's calls (1, 2, …) are newer.
+  saved.answers.forEach((a, k) => state.answers.push({ at: a.at, text: a.text, seq: k - saved.answers.length }));
+  state.shownSeq = state.answers[state.answers.length - 1]?.seq ?? 0;
   renderLines();
   renderHistory();
   const last = state.answers[state.answers.length - 1];

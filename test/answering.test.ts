@@ -1,0 +1,147 @@
+// @vitest-environment happy-dom
+// The answer flow with a fake model: overlapping calls, errors on later
+// lines, re-asks, taps. Each case is a scenario a reviewer reproduced.
+
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AnswerRequest, AnswerResult } from "../src/llm";
+
+// A controllable model: each call waits until the test resolves or rejects it.
+interface Pending {
+  req: AnswerRequest;
+  stream(text: string): void;
+  finish(text: string): void;
+  fail(err: Error): void;
+}
+const calls: Pending[] = [];
+
+vi.mock("../src/llm", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../src/llm")>();
+  return {
+    ...real,
+    preloadProvider: () => {},
+    answer: (req: AnswerRequest) =>
+      new Promise<AnswerResult>((resolve, reject) => {
+        req.signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+        calls.push({
+          req,
+          stream: (text) => req.onDelta(text),
+          finish: (text) => {
+            const clean = text.trim();
+            resolve({ text: clean, silent: /^[\s\-–—.·]*$/.test(clean), cacheRead: 0, cacheWrite: 0 });
+          },
+          fail: (err) => reject(err),
+        });
+      }),
+  };
+});
+
+type Answering = typeof import("../src/answering");
+type State = typeof import("../src/state");
+let ask: Answering["ask"];
+let cancelAll: Answering["cancelAll"];
+let st: State;
+const tick = () => new Promise((r) => setTimeout(r, 0));
+const screen = () => document.getElementById("answer")!;
+const history = () => [...document.querySelectorAll("#history div")].map((d) => d.textContent);
+const meta = () => document.getElementById("meta")!.textContent;
+
+beforeAll(async () => {
+  document.body.innerHTML = '<div id="app"></div>';
+  ({ ask, cancelAll } = await import("../src/answering"));
+  st = await import("../src/state");
+});
+
+beforeEach(() => {
+  cancelAll();
+  calls.length = 0;
+  st.settings.provider = "anthropic"; // no free-plan cap in these tests
+  st.settings.apiKey = "sk-ant-test";
+  st.state.systemPrompt = "board";
+  st.state.transcript.length = 0;
+  st.state.answers.length = 0;
+  st.state.session.length = 0;
+  st.state.shownSeq = 0;
+  const now = Date.now();
+  for (let i = 0; i < 4; i++) st.state.transcript.push({ text: `line ${i}`, at: now - (4 - i) * 1000 });
+  screen().textContent = "";
+  document.getElementById("meta")!.textContent = "";
+});
+
+describe("answer flow", () => {
+  it("an error on a later auto call doesn't replace the answer that is streaming", async () => {
+    void ask(false, 0);
+    void ask(false, 1);
+    calls[0]!.stream("We are at 25 euros");
+    calls[1]!.fail(Object.assign(new Error("Overloaded"), { status: 529 }));
+    await tick();
+    expect(screen().textContent).toBe("We are at 25 euros");
+    expect(meta()).toContain("Overloaded");
+    calls[0]!.finish("We are at 25 euros a month.");
+    await tick();
+    expect(screen().textContent).toBe("We are at 25 euros a month.");
+    expect(screen().classList.contains("error")).toBe(false);
+  });
+
+  it("a silent later call doesn't cancel an answer that is streaming", async () => {
+    void ask(false, 0);
+    void ask(false, 1);
+    calls[0]!.stream("The test runs");
+    calls[1]!.finish("—");
+    calls[0]!.finish("The test runs since yesterday.");
+    await tick();
+    expect(screen().textContent).toBe("The test runs since yesterday.");
+    expect(st.state.answers.map((a) => a.text)).toEqual(["The test runs since yesterday."]);
+  });
+
+  it("a re-ask that comes back silent puts the last full answer back, not the cut-off one", async () => {
+    void ask(false, 0);
+    calls[0]!.finish("Earlier full answer.");
+    await tick();
+    void ask(false, 2); // early fire on line 2
+    calls[1]!.stream("Yes, the cost is about");
+    void ask(false, 2); // the final added words: re-ask the same line
+    calls[2]!.finish("—");
+    await tick();
+    expect(screen().textContent).toBe("Earlier full answer.");
+    expect(screen().classList.contains("muted")).toBe(true);
+  });
+
+  it("a re-ask of the same line never cancels a tap", async () => {
+    void ask(true, 2);
+    void ask(false, 2);
+    expect(calls[0]!.req.signal.aborted).toBe(false);
+    expect(calls[0]!.req.forced).toBe(true);
+  });
+
+  it("a tap that gets silence keeps the last answer and says so", async () => {
+    void ask(false, 0);
+    calls[0]!.finish("Keep me.");
+    await tick();
+    void ask(true, 3);
+    calls[1]!.finish("—");
+    await tick();
+    expect(screen().textContent).toBe("Keep me.");
+    expect(meta()).toBe("Nothing to say on that line.");
+  });
+
+  it("an answer that finishes late goes to the history in call order", async () => {
+    void ask(false, 0); // A
+    void ask(false, 1); // B
+    calls[1]!.stream("B answer");
+    calls[1]!.finish("B answer.");
+    await tick();
+    calls[0]!.finish("A answer.");
+    await tick();
+    expect(screen().textContent).toBe("B answer.");
+    expect(st.state.answers.map((a) => a.text)).toEqual(["A answer.", "B answer."]);
+    expect(history()).toEqual(["A answer."]);
+  });
+
+  it("a tap's error is shown on the answer area", async () => {
+    void ask(true, 3);
+    calls[0]!.fail(Object.assign(new Error("Invalid API key"), { status: 401 }));
+    await tick();
+    expect(screen().textContent).toContain("Key rejected by the provider");
+    expect(screen().classList.contains("error")).toBe(true);
+  });
+});

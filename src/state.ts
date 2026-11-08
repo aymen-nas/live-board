@@ -13,6 +13,12 @@ import type { Utterance } from "./stt";
 
 export const SIM = simEnabled();
 
+export interface Answer {
+  at: number;
+  text: string;
+  seq: number;
+}
+
 export const settings = loadSettings();
 fixProviderForKey(settings);
 
@@ -22,7 +28,10 @@ export const state = {
   systemPrompt: "",
   transcript: [] as Utterance[],
   session: [] as SessionEntry[], // what was heard and suggested, for Copy
-  answers: [] as { at: number; text: string }[],
+  // Finished answers in call order. `seq` is the call that made each one;
+  // the answer whose seq is shownSeq is the one on screen (not in history).
+  answers: [] as Answer[],
+  shownSeq: 0,
   shownQuestions: new Set<string>(),
   questionIndex: 0,
   currentCard: null as Card | null,
@@ -59,8 +68,16 @@ export function rememberMeeting(): void {
   }, 1_000);
 }
 
+// Save right away (the app is being hidden, reloaded or evicted).
+export function flushMeeting(): void {
+  if (saveTimer === null) return;
+  window.clearTimeout(saveTimer);
+  saveTimer = null;
+  saveMeeting({ transcript: state.transcript, session: state.session, answers: state.answers });
+}
+
 export function forgetMeeting(): void {
   if (saveTimer !== null) window.clearTimeout(saveTimer);
   saveTimer = null;
-  clearMeeting();
+  if (!SIM) clearMeeting();
 }

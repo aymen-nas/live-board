@@ -7,7 +7,7 @@ import { fetchRemoteBoard, listRemoteBoards } from "./github";
 import { defaultBoardName, deleteBoard, listBoards, saveBoard } from "./library";
 import { PROVIDERS, warmCache, type Provider } from "./llm";
 import { DEFAULTS, cleanSecret, fixProviderForKey, providerForKey } from "./settings";
-import { forgetMeeting, persistSettings, settings, state } from "./state";
+import { SIM, forgetMeeting, persistSettings, settings, state } from "./state";
 import { $, els, escapeHtml, setMeta, setStatus, showAnswer } from "./ui";
 import { loadBoard, renderChips, renderHistory, renderLines, renderRate } from "./view";
 
@@ -23,9 +23,11 @@ function renderLibrary(): void {
   if (settings.boardName) select.value = settings.boardName;
 }
 
+// What the user picked in this visit; a background sync must not undo it.
+let userPicked = "";
+
 function renderRemote(): void {
   const select = $<HTMLSelectElement>("remote");
-  const picked = select.value; // a background sync must not undo the user's pick
   const boards = state.remoteBoards;
   select.innerHTML = boards.length
     ? boards.map((b) => `<option value="${escapeHtml(b.path)}">${escapeHtml(b.name)}</option>`).join("")
@@ -33,7 +35,7 @@ function renderRemote(): void {
   select.disabled = boards.length === 0;
   $<HTMLButtonElement>("remoteLoad").disabled = select.disabled;
   const current = boards.find((b) => b.name === settings.boardName);
-  if (boards.some((b) => b.path === picked)) select.value = picked;
+  if (userPicked && boards.some((b) => b.path === userPicked)) select.value = userPicked;
   else if (current) select.value = current.path;
 }
 
@@ -69,13 +71,12 @@ async function useRemote(path: string): Promise<void> {
     const text = await fetchRemoteBoard({ repo: settings.ghRepo, token: settings.ghToken }, path);
     settings.boardText = text;
     settings.boardName = meta.name;
-    saveBoard(meta.name, text); // keep a copy for offline use
-    persistSettings();
-    loadBoard();
+    // Put it in the form and save the whole form, so a key typed in the same
+    // visit is kept too.
     $<HTMLTextAreaElement>("boardText").value = text;
     input("boardName").value = meta.name;
+    saveFromDialog();
     $("remoteInfo").textContent = `Using ${meta.name}`;
-    showAnswer(`${meta.name} loaded. Start listening.`, true);
     els.settings.close();
   } catch (err) {
     $("remoteInfo").textContent = err instanceof Error ? err.message : String(err);
@@ -88,9 +89,10 @@ function applyProviderDefaults(provider: Provider): void {
   input("baseUrl").value = info.baseUrl;
   input("baseUrl").disabled = provider === "anthropic";
   $("providerNote").textContent = info.note;
-  // Don't carry a key over to a provider it doesn't belong to.
+  // Don't carry a key over to a provider it doesn't belong to (Custom takes
+  // any key except an Anthropic one, like fixProviderForKey).
   const owner = providerForKey(cleanSecret(input("apiKey").value));
-  if (owner && owner !== provider) input("apiKey").value = "";
+  if (owner && owner !== provider && (provider !== "custom" || owner === "anthropic")) input("apiKey").value = "";
 }
 
 function readGitHubFields(): void {
@@ -99,6 +101,7 @@ function readGitHubFields(): void {
 }
 
 export function openSettings(): void {
+  userPicked = "";
   $<HTMLSelectElement>("provider").value = settings.provider;
   input("apiKey").value = settings.apiKey;
   input("myName").value = settings.myName;
@@ -113,9 +116,12 @@ export function openSettings(): void {
   input("ghToken").value = settings.ghToken;
   renderLibrary();
   renderRemote();
-  // First run: the key is the first thing to fill in, so open that section.
-  $<HTMLDetailsElement>("providerSection").open = !settings.apiKey;
+  // First run: the key is the first thing to fill in, so open that section
+  // and bring it into view.
+  const section = $<HTMLDetailsElement>("providerSection");
+  section.open = !settings.apiKey;
   els.settings.showModal();
+  if (!settings.apiKey) section.scrollIntoView({ block: "start" });
   void syncRemote(true);
 }
 
@@ -135,7 +141,7 @@ function saveFromDialog(): void {
   }
   settings.boardText = $<HTMLTextAreaElement>("boardText").value;
   settings.boardName = settings.boardText.trim() ? input("boardName").value.trim() || defaultBoardName(settings.boardText) : "";
-  if (settings.boardText.trim()) saveBoard(settings.boardName, settings.boardText);
+  if (settings.boardText.trim() && !SIM) saveBoard(settings.boardName, settings.boardText);
   persistSettings();
   // Reload the board only when it changed: that resets topic and questions.
   const boardChanged = settings.boardText !== before.board || settings.myName !== before.name;
@@ -149,8 +155,15 @@ function saveFromDialog(): void {
       .then(() => setStatus(stt.isListening() ? "Listening" : "Ready"))
       .catch((err) => setStatus(`Cache warm failed: ${err instanceof Error ? err.message : String(err)}`));
   }
-  if (boardChanged && !stt.isListening()) {
-    showAnswer(state.board ? `${settings.boardName} loaded. Start listening.` : "No board loaded.", true);
+  if ((boardChanged || settings.apiKey !== before.key) && !stt.isListening()) {
+    showAnswer(
+      !settings.apiKey
+        ? "Add your API key under Provider, key and language to get answers."
+        : state.board
+          ? `${settings.boardName} loaded. Start listening.`
+          : "Key saved. Step 2: tap ⚙︎ and pick a board.",
+      true,
+    );
   }
 }
 
@@ -180,6 +193,9 @@ export function initSettings(): void {
     applyProviderDefaults((e.target as HTMLSelectElement).value as Provider);
   });
   $("remoteLoad").addEventListener("click", () => void useRemote($<HTMLSelectElement>("remote").value));
+  $<HTMLSelectElement>("remote").addEventListener("change", (e) => {
+    userPicked = (e.target as HTMLSelectElement).value;
+  });
   $("remoteSync").addEventListener("click", () => {
     readGitHubFields();
     persistSettings();

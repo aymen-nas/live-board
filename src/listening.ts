@@ -13,6 +13,7 @@ import { els, environment, setMeta, setStatus, showAnswer } from "./ui";
 import { renderLines, updateContext } from "./view";
 
 const MIN_WORDS = 3; // "okay", "yeah", "mhm": not worth a call
+const LIVE_CHARS = 80; // about 2 lines of the live line at 375 px
 
 const aimed = (text: string): boolean => looksAimedAt(text, settings.myName);
 
@@ -48,7 +49,8 @@ const early = new EarlyFire({
 
 const callbacks: SttCallbacks = {
   onInterim: (text) => {
-    els.interim.textContent = text;
+    // A long sentence stays one live result until the pause: show its newest words.
+    els.interim.textContent = text.length > LIVE_CHARS ? `…${text.slice(-LIVE_CHARS)}` : text;
     early.interim(text);
   },
   onFinal: (u) => {
@@ -69,7 +71,11 @@ const callbacks: SttCallbacks = {
   },
   onStatus: (text) => {
     setStatus(text);
-    if (text.startsWith("Mic error") || text.startsWith("Speech service")) setMeta(environment());
+    if (text.startsWith("Mic error") || text.startsWith("Speech service") || text.startsWith("Could not start")) {
+      setMeta(environment());
+    }
+    // The header is one line; long instructions go where they can be read.
+    if (text.startsWith("Speech service") || text.startsWith("Could not start")) showAnswer(text, true);
   },
   onGaveUp: () => stopped(),
 };
@@ -81,6 +87,7 @@ export const LISTENING_CHANGED = "live-board:listening";
 
 function stopped(): void {
   early.reset();
+  els.interim.textContent = "";
   keepWarm(false);
   releaseScreen();
   els.listen.textContent = "Start";

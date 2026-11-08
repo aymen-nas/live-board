@@ -31,6 +31,7 @@ const MAX_FAILURES = 5;
 
 export class Stt {
   private rec: any = null;
+  private closing: any = null; // stopped, may still deliver its last final
   private listening = false;
   private restartTimer: number | null = null;
   private failures = 0; // consecutive sessions that died with an error
@@ -59,6 +60,7 @@ export class Stt {
     }
     this.listening = true;
     this.failures = 0;
+    this.closing = null; // a new session: the old one's late events no longer count
     this.spawn(Ctor);
   }
 
@@ -68,6 +70,8 @@ export class Stt {
       window.clearTimeout(this.restartTimer);
       this.restartTimer = null;
     }
+    // stop(), not abort(): the engine still delivers the sentence in progress.
+    this.closing = this.rec;
     try {
       this.rec?.stop();
     } catch {
@@ -89,8 +93,9 @@ export class Stt {
     rec.maxAlternatives = 1;
 
     // After Stop→Start or a language change, the old recognizer still fires
-    // its last events; only the current one may touch state.
-    const current = () => this.rec === rec;
+    // its last events; only the current one may touch state. After a plain
+    // Stop, the stopped one may still hand over its last sentence.
+    const current = () => this.rec === rec || (this.rec === null && this.closing === rec);
     let failed = false;
 
     rec.onstart = () => {
@@ -128,6 +133,7 @@ export class Stt {
 
     rec.onend = () => {
       if (!current()) return;
+      if (this.closing === rec) this.closing = null;
       this.rec = null;
       if (this.listening) this.restartAfter(Ctor, failed);
     };

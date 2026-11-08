@@ -16,15 +16,6 @@ export function windowEndingAt(transcript: Utterance[], upto: number): Utterance
     .slice(-MAX_LINES);
 }
 
-// Indexes of the lines heard in the last 90 seconds (for the tappable list).
-export function recentIndexes(transcript: Utterance[], now: number): number[] {
-  const out: number[] = [];
-  transcript.forEach((u, i) => {
-    if (u.at >= now - WINDOW_MS) out.push(i);
-  });
-  return out.slice(-MAX_LINES);
-}
-
 // Free providers are rate-limited, so only utterances that look aimed at me
 // get an automatic call: my name, "you"/"your" (German: du, dir, dich, dein,
 // Sie, Ihnen, euch), or a question mark. Fillers like "you know" or "thank

@@ -2,7 +2,6 @@
 // question chips, the free-plan counter, and the loaded board.
 
 import { buildSystemPrompt, parseBoard } from "./board";
-import { recentIndexes } from "./conversation";
 import { bestCard, bestQuestion, indexBoard } from "./match";
 import { limiter, settings, state } from "./state";
 import { $, els, escapeHtml, flash, showAnswer, showCard } from "./ui";
@@ -14,17 +13,19 @@ const QUIET_MS = 60_000; // offer a question only after a minute without an answ
 let chipQuestion: string | null = null;
 
 export function renderLines(): void {
-  els.lines.innerHTML = recentIndexes(state.transcript, Date.now())
-    .slice(-VISIBLE_LINES)
-    .map((i) => `<button class="line" data-i="${i}">${escapeHtml(state.transcript[i]!.text)}</button>`)
+  // The last few lines, however old: a tap answers with the 90 s before that line.
+  const from = Math.max(0, state.transcript.length - VISIBLE_LINES);
+  els.lines.innerHTML = state.transcript
+    .slice(from)
+    .map((u, k) => `<button class="line" data-i="${from + k}">${escapeHtml(u.text)}</button>`)
     .join("");
   els.lines.scrollTop = els.lines.scrollHeight; // newest line in view
 }
 
 export function renderHistory(): void {
-  // answers[last] is on screen; show the ones before it, newest first.
+  // Every finished answer except the one on screen, newest first.
   els.history.innerHTML = state.answers
-    .slice(0, -1)
+    .filter((a) => a.seq !== state.shownSeq)
     .slice(-HISTORY)
     .reverse()
     .map((a) => `<div>${escapeHtml(a.text)}</div>`)

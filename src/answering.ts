@@ -2,26 +2,30 @@
 //
 // Auto calls run side by side: a later line that turns out not to be for me
 // must not cancel an answer that is still streaming. A tap (forced) replaces
-// everything in flight, and a re-ask of the same line replaces that line's
-// call. Only the newest call that has text may draw on screen, so an older
-// answer finishing late goes to the history instead of overwriting.
+// everything in flight; a re-ask of the same line replaces that line's auto
+// call, but never a tap. Only the newest call that has text may draw. Answers
+// are kept in call order, so one that finishes late lands in the history.
+// Auto calls never put an error on the answer area; they note it in the top
+// line, so a failing filler line can't hide a good answer.
 
 import { windowEndingAt } from "./conversation";
-import { EmptyAnswerError, ProviderError, answer } from "./llm";
+import { ProviderError, answer } from "./llm";
 import { simLog } from "./sim";
-import { SIM, limiter, rememberMeeting, settings, state } from "./state";
+import { SIM, limiter, rememberMeeting, settings, state, type Answer } from "./state";
 import { announce, els, flash, setMeta, showAnswer, showError } from "./ui";
 import { renderChips, renderHistory, renderRate } from "./view";
 
 interface Call {
   seq: number;
   upto: number;
+  forced: boolean;
   controller: AbortController;
 }
 
 const live = new Map<number, Call>();
 let lastSeq = 0;
-let shownSeq = 0; // the call whose text is on screen
+// The text on screen is a stream that was cut off (its call was replaced).
+let partialOnScreen = false;
 
 function renderBusy(): void {
   els.answer.classList.toggle("thinking", live.size > 0);
@@ -31,18 +35,43 @@ export function isAnswering(): boolean {
   return live.size > 0;
 }
 
+function abort(c: Call): void {
+  if (c.seq === state.shownSeq) partialOnScreen = true;
+  c.controller.abort();
+  live.delete(c.seq);
+}
+
 export function cancelAll(): void {
-  for (const c of live.values()) c.controller.abort();
-  live.clear();
+  for (const c of [...live.values()]) abort(c);
+  partialOnScreen = false;
   renderBusy();
+}
+
+// A cut-off stream is on screen and nothing else will replace it: put the
+// last full answer back, dimmed.
+function restoreIfPartial(): void {
+  if (!partialOnScreen || live.has(state.shownSeq)) return;
+  partialOnScreen = false;
+  const last = state.answers[state.answers.length - 1];
+  if (last) state.shownSeq = last.seq;
+  showAnswer(last?.text ?? "", true);
+  renderHistory();
+}
+
+function fileAnswer(a: Answer): void {
+  const i = state.answers.findIndex((x) => x.seq > a.seq);
+  if (i === -1) state.answers.push(a);
+  else state.answers.splice(i, 0, a);
 }
 
 // What went wrong, in words for the screen.
 function describe(err: unknown): { text: string; offline: boolean } {
   const msg = err instanceof Error ? err.message : String(err);
   const status = (err as { status?: number }).status;
-  if (!navigator.onLine || (err instanceof TypeError && /fetch|network|load/i.test(msg))) {
-    return { text: "No connection: check the network, then tap a line or Answer.", offline: true };
+  if (!navigator.onLine) return { text: "No connection: check the network, then tap a line or Answer.", offline: true };
+  if (err instanceof TypeError && /fetch|network|load/i.test(msg)) {
+    // Safari says "Load failed" for a dropped connection and for a provider that blocks browser calls alike.
+    return { text: `Network error (no connection, or the provider blocked the call): ${msg}`, offline: false };
   }
   if (status === 429) return { text: `Rate limit: ${msg}`, offline: false };
   if (status === 401 || status === 403) return { text: `Key rejected by the provider: ${msg}`, offline: false };
@@ -66,12 +95,9 @@ export async function ask(forced: boolean, upto = state.transcript.length - 1): 
   }
 
   for (const c of [...live.values()]) {
-    if (forced || c.upto === upto) {
-      c.controller.abort();
-      live.delete(c.seq);
-    }
+    if (forced || (c.upto === upto && !c.forced)) abort(c);
   }
-  const call: Call = { seq: ++lastSeq, upto, controller: new AbortController() };
+  const call: Call = { seq: ++lastSeq, upto, forced, controller: new AbortController() };
   live.set(call.seq, call);
   renderBusy();
   const calledAt = Date.now();
@@ -79,14 +105,15 @@ export async function ask(forced: boolean, upto = state.transcript.length - 1): 
   renderRate();
 
   const askedAt = forced ? calledAt : window_[window_.length - 1]!.at;
-  const mayDraw = (): boolean => call.seq >= shownSeq;
+  const mayDraw = (): boolean => call.seq >= state.shownSeq;
   let drawing = false;
   const draw = (): void => {
-    if (!drawing) {
-      drawing = true;
-      shownSeq = call.seq;
-      flash();
-    }
+    if (drawing) return;
+    drawing = true;
+    state.shownSeq = call.seq;
+    partialOnScreen = false;
+    flash();
+    renderHistory(); // the answer that was on screen moves to the history
   };
 
   try {
@@ -110,26 +137,23 @@ export async function ask(forced: boolean, upto = state.transcript.length - 1): 
     });
     if (call.controller.signal.aborted) return;
     const now = Date.now();
-    if (result.silent && forced) {
-      // I asked and got nothing: say so, or the tap looks ignored.
-      if (mayDraw()) {
-        draw();
-        showAnswer("Nothing to say on that line.", true);
+    if (result.silent) {
+      restoreIfPartial();
+      if (forced) {
+        // I asked and got nothing: keep the last answer, dimmed, and say so.
+        setMeta("Nothing to say on that line.");
+        els.answer.classList.add("muted");
+      } else if (live.size === 1 && state.shownSeq < call.seq) {
+        // Nothing for me and nothing newer on its way: the answer on screen is old.
+        els.answer.classList.add("muted");
       }
-    } else if (result.silent) {
-      // Nothing for me. If nothing newer is on its way, dim the old answer.
-      if (call.seq === lastSeq && live.size === 1) els.answer.classList.add("muted");
     } else {
-      const onScreen = mayDraw();
-      if (onScreen) {
+      if (mayDraw()) {
         draw();
         showAnswer(result.text);
         announce(result.text);
-        state.answers.push({ at: now, text: result.text });
-      } else {
-        // A newer answer is already showing: file this one just under it.
-        state.answers.splice(Math.max(0, state.answers.length - 1), 0, { at: now, text: result.text });
       }
+      fileAnswer({ at: now, text: result.text, seq: call.seq });
       state.session.push({ at: now, kind: "answer", text: result.text });
       state.lastAnswerAt = now;
       renderHistory();
@@ -148,11 +172,12 @@ export async function ask(forced: boolean, upto = state.transcript.length - 1): 
       limiter()?.unrecord(calledAt); // it never reached the provider
       renderRate();
     }
-    if (err instanceof EmptyAnswerError && !forced) {
-      setMeta(text); // an auto call that came back empty: note it, keep the screen
-    } else if (forced || mayDraw()) {
+    restoreIfPartial();
+    if (forced) {
       draw();
       showError(text);
+    } else {
+      setMeta(text);
     }
     if (SIM) simLog.push({ at: Date.now(), kind: "error", text: err instanceof Error ? err.message : String(err) });
   } finally {
